@@ -453,13 +453,13 @@ jobs:
             public static final RegistryObject<Item> HAZMAT_BOOTS = ITEMS.register("hazmat_boots", () -> new ArmorItem(HazmatMat.INSTANCE, ArmorItem.Type.BOOTS, new Item.Properties()));
 
             public static final RegistryObject<EntityType<NukeEntities.NuclearCloudEntity>> NUCLEAR_CLOUD = ENTITIES.register("nuclear_cloud",
-              () -> EntityType.Builder.of(NukeEntities.NuclearCloudEntity::new, MobCategory.MISC).sized(4.0f, 4.0f).fireImmune().clientTrackingRange(32).updateInterval(2).build("nuclear_cloud"));
+              () -> EntityType.Builder.<NukeEntities.NuclearCloudEntity>of(NukeEntities.NuclearCloudEntity::new, MobCategory.MISC).sized(4.0f, 4.0f).fireImmune().clientTrackingRange(32).updateInterval(2).build("nuclear_cloud"));
             public static final RegistryObject<EntityType<NukeEntities.PrimedNukeEntity>> PRIMED_NUKE = ENTITIES.register("primed_nuke",
-              () -> EntityType.Builder.of(NukeEntities.PrimedNukeEntity::new, MobCategory.MISC).sized(0.98f, 0.98f).clientTrackingRange(16).updateInterval(2).build("primed_nuke"));
+              () -> EntityType.Builder.<NukeEntities.PrimedNukeEntity>of(NukeEntities.PrimedNukeEntity::new, MobCategory.MISC).sized(0.98f, 0.98f).clientTrackingRange(16).updateInterval(2).build("primed_nuke"));
             public static final RegistryObject<EntityType<NukeEntities.MiniNukeGrenadeEntity>> MINI_GRENADE_ENT = ENTITIES.register("mini_nuke_grenade",
               () -> EntityType.Builder.<NukeEntities.MiniNukeGrenadeEntity>of(NukeEntities.MiniNukeGrenadeEntity::new, MobCategory.MISC).sized(0.25f, 0.25f).clientTrackingRange(8).updateInterval(4).build("mini_nuke_grenade"));
             public static final RegistryObject<EntityType<NukeEntities.FallingMissileEntity>> FALLING_MISSILE = ENTITIES.register("falling_missile",
-              () -> EntityType.Builder.of(NukeEntities.FallingMissileEntity::new, MobCategory.MISC).sized(0.9f, 4.5f).clientTrackingRange(24).updateInterval(1).build("falling_missile"));
+              () -> EntityType.Builder.<NukeEntities.FallingMissileEntity>of(NukeEntities.FallingMissileEntity::new, MobCategory.MISC).sized(0.9f, 4.5f).clientTrackingRange(24).updateInterval(1).build("falling_missile"));
 
             public static final RegistryObject<CreativeModeTab> REALNUKES_TAB = TABS.register("realnukes_tab", () -> CreativeModeTab.builder()
               .title(Component.translatable("itemGroup.realnukes"))
@@ -691,7 +691,7 @@ jobs:
           }
           """)
 
-          # --- ClientCinemaState.java (seguro para servidor e cliente) ---
+          # --- ClientCinemaState.java ---
           w(J + 'ClientCinemaState.java', """
           package com.realnukes;
           import java.util.ArrayList;
@@ -881,22 +881,34 @@ jobs:
           # --- NuclearExplosionManager.java ---
           w(J + 'NuclearExplosionManager.java', """
           package com.realnukes;
-          import java.util.*;
+          import java.util.ArrayList;
+          import java.util.HashMap;
+          import java.util.Iterator;
+          import java.util.List;
+          import java.util.Locale;
+          import java.util.Map;
           import net.minecraft.ChatFormatting;
           import net.minecraft.core.BlockPos;
           import net.minecraft.core.particles.ParticleTypes;
           import net.minecraft.network.chat.Component;
           import net.minecraft.resources.ResourceKey;
-          import net.minecraft.server.level.*;
-          import net.minecraft.sounds.*;
+          import net.minecraft.server.level.ServerLevel;
+          import net.minecraft.server.level.ServerPlayer;
+          import net.minecraft.sounds.SoundEvents;
+          import net.minecraft.sounds.SoundSource;
           import net.minecraft.tags.BlockTags;
-          import net.minecraft.world.effect.*;
-          import net.minecraft.world.entity.*;
+          import net.minecraft.world.effect.MobEffectInstance;
+          import net.minecraft.world.effect.MobEffects;
+          import net.minecraft.world.entity.Entity;
+          import net.minecraft.world.entity.LivingEntity;
           import net.minecraft.world.level.Level;
-          import net.minecraft.world.level.block.*;
+          import net.minecraft.world.level.block.AbstractGlassBlock;
+          import net.minecraft.world.level.block.Blocks;
+          import net.minecraft.world.level.block.StainedGlassPaneBlock;
           import net.minecraft.world.level.block.state.BlockState;
           import net.minecraft.world.level.levelgen.Heightmap;
-          import net.minecraft.world.phys.*;
+          import net.minecraft.world.phys.AABB;
+          import net.minecraft.world.phys.Vec3;
           import net.minecraftforge.event.TickEvent;
           import net.minecraftforge.event.level.LevelEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -1110,8 +1122,10 @@ jobs:
           # --- VolumetricRenderTypes.java ---
           w(J + 'VolumetricRenderTypes.java', """
           package com.realnukes;
-          import com.mojang.blaze3d.vertex.*;
-          import net.minecraft.client.renderer.*;
+          import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+          import com.mojang.blaze3d.vertex.VertexFormat;
+          import net.minecraft.client.renderer.RenderStateShard;
+          import net.minecraft.client.renderer.RenderType;
           import net.minecraft.resources.ResourceLocation;
           public class VolumetricRenderTypes extends RenderType {
             private VolumetricRenderTypes(String n, VertexFormat f, VertexFormat.Mode m, int b, boolean c, boolean s, Runnable st, Runnable cl) {
@@ -1144,19 +1158,26 @@ jobs:
           }
           """)
 
-          # --- NuclearCloudRenderer.java ---
+          # --- NuclearCloudRenderer.java (imports explicitos sem conflito com org.joml.Math) ---
           w(J + 'NuclearCloudRenderer.java', """
           package com.realnukes;
-          import java.util.*;
-          import com.mojang.blaze3d.vertex.*;
-          import net.minecraft.client.*;
-          import net.minecraft.client.renderer.*;
+          import java.util.Arrays;
+          import com.mojang.blaze3d.vertex.PoseStack;
+          import com.mojang.blaze3d.vertex.VertexConsumer;
+          import net.minecraft.client.Camera;
+          import net.minecraft.client.Minecraft;
+          import net.minecraft.client.renderer.LightTexture;
+          import net.minecraft.client.renderer.MultiBufferSource;
+          import net.minecraft.client.renderer.RenderType;
           import net.minecraft.client.renderer.culling.Frustum;
-          import net.minecraft.client.renderer.entity.*;
+          import net.minecraft.client.renderer.entity.EntityRenderer;
+          import net.minecraft.client.renderer.entity.EntityRendererProvider;
           import net.minecraft.client.renderer.texture.OverlayTexture;
           import net.minecraft.resources.ResourceLocation;
           import net.minecraft.world.phys.Vec3;
-          import org.joml.*;
+          import org.joml.Matrix3f;
+          import org.joml.Matrix4f;
+          import org.joml.Vector3f;
 
           public class NuclearCloudRenderer extends EntityRenderer<NukeEntities.NuclearCloudEntity> {
             private static final ResourceLocation CLOUD_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/volumetric_cloud.png");
@@ -1428,14 +1449,18 @@ jobs:
           # --- ClientCinema.java ---
           w(J + 'ClientCinema.java', """
           package com.realnukes;
-          import java.util.*;
+          import java.util.ArrayList;
+          import java.util.Iterator;
+          import java.util.List;
           import net.minecraft.client.Minecraft;
           import net.minecraft.client.player.LocalPlayer;
-          import net.minecraft.sounds.*;
+          import net.minecraft.sounds.SoundEvents;
+          import net.minecraft.sounds.SoundSource;
           import net.minecraft.world.effect.MobEffects;
           import net.minecraft.world.phys.Vec3;
           import net.minecraftforge.api.distmarker.Dist;
-          import net.minecraftforge.client.event.*;
+          import net.minecraftforge.client.event.RenderGuiOverlayEvent;
+          import net.minecraftforge.client.event.ViewportEvent;
           import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
           import net.minecraftforge.event.TickEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -1566,7 +1591,7 @@ jobs:
           PYEOF
 
       - name: Compilar JAR
-        run: gradle build --no-daemon --stacktrace
+        run: gradle build --no-daemon
 
       - name: Disponibilizar Mod
         uses: actions/upload-artifact@v4
