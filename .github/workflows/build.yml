@@ -19,7 +19,7 @@ jobs:
         with:
           gradle-version: '8.8'
 
-      - name: Gerar Mod RealNukes Completo
+      - name: Gerar Mod RealNukes Cinematic
         run: |
           python3 - << 'PYEOF'
           import os, zlib, struct, math, json
@@ -31,51 +31,42 @@ jobs:
             with open(p, 'w', encoding='utf-8') as f:
               f.write(text.lstrip('\n'))
 
-          def save_png(p, width, height, fn):
+          def png(p, W, H, fn):
             d = os.path.dirname(p)
             if d:
               os.makedirs(d, exist_ok=True)
             raw = bytearray()
-            for y in range(height):
+            for y in range(H):
               raw.append(0)
-              for x in range(width):
-                r, g, b, a = fn(x, y, width, height)
+              for x in range(W):
+                r, g, b, a = fn(x, y, W, H)
                 raw.extend((
                   max(0, min(255, int(r))),
                   max(0, min(255, int(g))),
                   max(0, min(255, int(b))),
                   max(0, min(255, int(a)))
                 ))
-            def ck(t, data):
-              return struct.pack('>I', len(data)) + t + data + struct.pack('>I', zlib.crc32(t + data) & 0xffffffff)
-            ihdr = struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)
+            ck = lambda t, b: struct.pack('>I', len(b)) + t + b + struct.pack('>I', zlib.crc32(t + b) & 0xffffffff)
             sig = bytes([137, 80, 78, 71, 13, 10, 26, 10])
-            png = sig + ck(b'IHDR', ihdr) + ck(b'IDAT', zlib.compress(bytes(raw), 6)) + ck(b'IEND', b'')
+            ih = struct.pack('>IIBBBBB', W, H, 8, 6, 0, 0, 0)
             with open(p, 'wb') as f:
-              f.write(png)
+              f.write(sig + ck(b'IHDR', ih) + ck(b'IDAT', zlib.compress(bytes(raw), 6)) + ck(b'IEND', b''))
 
           def h2(x, y, s):
             return abs(math.sin(x * 127.1 + y * 311.7 + s * 74.7) * 43758.5453) % 1.0
 
-          def vnoise(x, y, per, s):
-            ix = int(math.floor(x))
-            iy = int(math.floor(y))
-            fx = x - ix
-            fy = y - iy
-            ux = fx * fx * (3.0 - 2.0 * fx)
-            uy = fy * fy * (3.0 - 2.0 * fy)
-            a = h2(ix % per, iy % per, s)
-            b = h2((ix + 1) % per, iy % per, s)
-            c = h2(ix % per, (iy + 1) % per, s)
-            d = h2((ix + 1) % per, (iy + 1) % per, s)
+          def vn(x, y, per, s):
+            ix, iy = int(math.floor(x)), int(math.floor(y))
+            fx, fy = x - ix, y - iy
+            ux, uy = fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy)
+            a, b = h2(ix % per, iy % per, s), h2((ix + 1) % per, iy % per, s)
+            c, d = h2(ix % per, (iy + 1) % per, s), h2((ix + 1) % per, (iy + 1) % per, s)
             return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy
 
-          def fbm(x, y, w0, h0, s):
-            v = 0.0
-            amp = 0.5
-            per = 4
+          def fbm(x, y, W, H, s):
+            v, amp, per = 0.0, 0.5, 4
             for i in range(4):
-              v += amp * vnoise(x * per / w0, y * per / h0, per, s + i * 19.3)
+              v += amp * vn(x * per / W, y * per / H, per, s + i * 17.3)
               per *= 2
               amp *= 0.5
             return v
@@ -100,7 +91,6 @@ jobs:
           w('build.gradle', """
           plugins {
             id 'eclipse'
-            id 'idea'
             id 'net.minecraftforge.gradle' version '[6.0,6.2)'
           }
           version = '1.0.0'
@@ -119,18 +109,16 @@ jobs:
             manifest {
               attributes([
                 'Specification-Title': 'realnukes',
-                'Specification-Vendor': 'realnukes',
                 'Specification-Version': '1',
                 'Implementation-Title': 'realnukes',
-                'Implementation-Version': '1.0.0',
-                'Implementation-Vendor': 'realnukes'
+                'Implementation-Version': '1.0.0'
               ])
             }
             finalizedBy 'reobfJar'
           }
           """)
 
-          w('src/main/resources/pack.mcmeta', '{"pack":{"description":"RealNukes Resources","pack_format":15}}\n')
+          w('src/main/resources/pack.mcmeta', '{"pack":{"description":"RealNukes","pack_format":15}}\n')
 
           w('src/main/resources/META-INF/mods.toml', """
           modLoader="javafml"
@@ -139,8 +127,8 @@ jobs:
           [[mods]]
           modId="realnukes"
           version="1.0.0"
-          displayName="RealNukes - Cinematic Nuclear Mod"
-          description="Realistic and cinematic nuclear bombs with 3D volumetric mushroom clouds."
+          displayName="RealNukes Cinematic"
+          description="Realistic 3D volumetric nuclear clouds and arsenal."
           [[dependencies.realnukes]]
           modId="forge"
           mandatory=true
@@ -156,465 +144,272 @@ jobs:
           """)
 
           # --- TEXTURAS & MODELOS ---
+          A = 'src/main/resources/assets/realnukes/'
           bombs = [
-            ('tactical_nuke', (72, 88, 62), (46, 56, 40), (235, 200, 30), (80, 255, 90)),
-            ('little_boy', (64, 72, 58), (38, 44, 34), (225, 185, 35), (255, 70, 50)),
-            ('fat_man', (225, 190, 35), (165, 130, 20), (30, 30, 34), (255, 120, 25)),
-            ('hydrogen_bomb', (85, 125, 165), (52, 78, 108), (220, 235, 250), (80, 220, 255)),
-            ('tsar_bomba', (48, 52, 58), (28, 30, 36), (220, 35, 35), (255, 240, 240)),
-            ('neutron_bomb', (150, 168, 182), (88, 102, 116), (35, 195, 240), (110, 245, 255)),
+            ('tactical_nuke', (72, 88, 62), (44, 54, 38), (235, 200, 30), (80, 255, 90)),
+            ('little_boy', (64, 72, 58), (36, 42, 32), (225, 185, 35), (255, 70, 50)),
+            ('fat_man', (225, 190, 35), (160, 126, 20), (28, 28, 32), (255, 120, 25)),
+            ('hydrogen_bomb', (85, 125, 165), (50, 76, 104), (225, 240, 255), (80, 220, 255)),
+            ('tsar_bomba', (48, 52, 58), (26, 28, 34), (220, 35, 35), (255, 245, 245)),
+            ('neutron_bomb', (150, 168, 182), (86, 100, 114), (35, 195, 240), (110, 245, 255)),
             ('cobalt_bomb', (58, 38, 72), (32, 20, 44), (55, 235, 95), (95, 255, 110)),
             ('antimatter_bomb', (26, 22, 34), (14, 12, 20), (175, 55, 255), (225, 120, 255)),
-            ('solar_bomb', (155, 95, 30), (95, 52, 15), (255, 200, 45), (255, 245, 160))
+            ('solar_bomb', (155, 95, 30), (92, 50, 15), (255, 200, 45), (255, 245, 160))
           ]
 
-          def make_bomb_side(c1, c2, st, gl, seed):
-            def fn(x, y, w0, h0):
-              n = (h2(x, y, seed) - 0.5) * 18
+          def bside(c1, c2, st, gl, sd):
+            def f(x, y, W, H):
+              n = (h2(x, y, sd) - 0.5) * 18
               if y in (0, 1, 14, 15) or x in (0, 15):
                 return (c2[0] + n, c2[1] + n, c2[2] + n, 255)
-              if y in (2, 13) and x in (2, 5, 10, 13):
-                return (c2[0] * 0.65, c2[1] * 0.65, c2[2] * 0.65, 255)
               if 6 <= y <= 9:
                 if 6 <= x <= 9 and 7 <= y <= 8:
                   return (gl[0], gl[1], gl[2], 255)
-                if ((x + y) // 2) % 2 == 0:
-                  return (st[0] + n * 0.5, st[1] + n * 0.5, st[2] + n * 0.5, 255)
-                return (24 + n * 0.3, 24 + n * 0.3, 28 + n * 0.3, 255)
-              sh = 1.0 + (0.14 if x < 5 else (-0.14 if x > 11 else 0.0))
+                return (st[0] + n * 0.4, st[1] + n * 0.4, st[2] + n * 0.4, 255) if ((x + y) // 2) % 2 == 0 else (24, 24, 28, 255)
+              sh = 1.12 if x < 5 else (0.88 if x > 11 else 1.0)
               return (c1[0] * sh + n, c1[1] * sh + n, c1[2] * sh + n, 255)
-            return fn
+            return f
 
-          def make_bomb_top(c1, c2, gl, seed):
-            def fn(x, y, w0, h0):
-              dx = x - 7.5
-              dy = y - 7.5
-              r = math.sqrt(dx * dx + dy * dy)
-              n = (h2(x, y, seed + 5) - 0.5) * 16
+          def btop(c1, c2, gl, sd):
+            def f(x, y, W, H):
+              r = math.hypot(x - 7.5, y - 7.5)
+              n = (h2(x, y, sd + 5) - 0.5) * 16
               if r < 2.3:
                 return (gl[0], gl[1], gl[2], 255)
               if r < 3.4:
-                return (28, 28, 32, 255)
-              if r < 6.4:
-                if abs(dx) < 0.8 or abs(dy) < 0.8:
-                  return (c2[0] + n, c2[1] + n, c2[2] + n, 255)
-                return (c1[0] + n, c1[1] + n, c1[2] + n, 255)
-              return (c2[0] + n, c2[1] + n, c2[2] + n, 255)
-            return fn
+                return (26, 26, 30, 255)
+              return (c1[0] + n, c1[1] + n, c1[2] + n, 255) if r < 6.4 else (c2[0] + n, c2[1] + n, c2[2] + n, 255)
+            return f
 
-          for idx, (nm, c1, c2, st, gl) in enumerate(bombs):
-            save_png('src/main/resources/assets/realnukes/textures/block/' + nm + '_side.png', 16, 16, make_bomb_side(c1, c2, st, gl, idx * 7 + 1))
-            save_png('src/main/resources/assets/realnukes/textures/block/' + nm + '_top.png', 16, 16, make_bomb_top(c1, c2, gl, idx * 7 + 2))
-            w('src/main/resources/assets/realnukes/blockstates/' + nm + '.json', json.dumps({'variants': {'': {'model': 'realnukes:block/' + nm}}}))
-            w('src/main/resources/assets/realnukes/models/block/' + nm + '.json', json.dumps({'parent': 'minecraft:block/cube_column', 'textures': {'end': 'realnukes:block/' + nm + '_top', 'side': 'realnukes:block/' + nm + '_side'}}))
-            w('src/main/resources/assets/realnukes/models/item/' + nm + '.json', json.dumps({'parent': 'realnukes:block/' + nm}))
-
-          def mk_trinitite(x, y, w0, h0):
-            v = fbm(x, y, 16, 16, 11.0)
-            sp = 45 if ((x + y) % 7 == 0 and v > 0.55) else 0
-            return (95 + v * 70 + sp, 175 + v * 65 + sp, 115 + v * 50 + sp, 255)
-
-          def mk_ash(x, y, w0, h0):
-            v = fbm(x, y, 16, 16, 22.0)
-            if v > 0.72:
-              return (160, 210, 75, 255)
-            c = 28 + v * 46
-            return (c + 6, c + 4, c, 255)
-
-          def mk_uranium(x, y, w0, h0):
-            n = (h2(x, y, 31) - 0.5) * 20
-            if x in (0, 15) or y in (0, 15):
-              return (45 + n, 80 + n, 45 + n, 255)
-            if (x in (4, 5, 10, 11) and y in (4, 5, 10, 11)) or (6 <= x <= 9 and 6 <= y <= 9):
-              return (110 + n, 245, 95 + n, 255)
-            return (62 + n, 145 + n, 65 + n, 255)
-
-          def mk_plutonium(x, y, w0, h0):
-            dx = x - 7.5
-            dy = y - 7.5
-            r = math.sqrt(dx * dx + dy * dy)
-            n = (h2(x, y, 41) - 0.5) * 18
-            if r < 3.6:
-              return (145, 240, 255, 255)
-            if r < 5.5:
-              return (45, 155, 235, 255)
-            if x in (0, 15) or y in (0, 15):
-              return (42 + n, 52 + n, 68 + n, 255)
-            return (74 + n, 88 + n, 106 + n, 255)
-
-          def mk_bunker(x, y, w0, h0):
-            n = (h2(x, y, 51) - 0.5) * 16
-            if x in (0, 15) or y in (0, 15):
-              return (42 + n, 46 + n, 54 + n, 255)
-            if (x in (2, 13) and y in (2, 13)) or abs(x - y) == 0 or abs(x + y - 15) == 0:
-              return (54 + n, 58 + n, 66 + n, 255)
-            return (76 + n, 82 + n, 92 + n, 255)
-
-          def mk_bglass(x, y, w0, h0):
-            if x in (0, 1, 14, 15) or y in (0, 1, 14, 15):
-              return (48, 54, 62, 255)
-            if (x in (2, 13) and y in (2, 13)):
-              return (88, 96, 108, 255)
-            if (x - y) in (3, 4) and 3 <= x <= 11:
-              return (215, 240, 250, 175)
-            return (145, 190, 210, 95)
+          for i, (nm, c1, c2, st, gl) in enumerate(bombs):
+            png(A + 'textures/block/' + nm + '_side.png', 16, 16, bside(c1, c2, st, gl, i * 7 + 1))
+            png(A + 'textures/block/' + nm + '_top.png', 16, 16, btop(c1, c2, gl, i * 7 + 2))
+            w(A + 'blockstates/' + nm + '.json', json.dumps({'variants': {'': {'model': 'realnukes:block/' + nm}}}))
+            w(A + 'models/block/' + nm + '.json', json.dumps({'parent': 'minecraft:block/cube_column', 'textures': {'end': 'realnukes:block/' + nm + '_top', 'side': 'realnukes:block/' + nm + '_side'}}))
+            w(A + 'models/item/' + nm + '.json', json.dumps({'parent': 'realnukes:block/' + nm}))
 
           cubes = [
-            ('trinitite_block', mk_trinitite, False),
-            ('radioactive_ash', mk_ash, False),
-            ('uranium_ore_block', mk_uranium, False),
-            ('plutonium_core_block', mk_plutonium, False),
-            ('lead_bunker_block', mk_bunker, False),
-            ('reinforced_bunker_glass', mk_bglass, True)
+            ('trinitite_block', lambda x, y, W, H: (95 + fbm(x, y, 16, 16, 11) * 75, 175 + fbm(x, y, 16, 16, 11) * 70, 115 + fbm(x, y, 16, 16, 11) * 55, 255), False),
+            ('radioactive_ash', lambda x, y, W, H: (155, 205, 70, 255) if fbm(x, y, 16, 16, 22) > 0.72 else (30 + fbm(x, y, 16, 16, 22) * 44, 28 + fbm(x, y, 16, 16, 22) * 42, 26 + fbm(x, y, 16, 16, 22) * 40, 255), False),
+            ('lead_bunker_block', lambda x, y, W, H: (44, 48, 56, 255) if (x in (0, 15) or y in (0, 15) or x == y or x + y == 15) else (76 + (h2(x, y, 51) - 0.5) * 16, 82 + (h2(x, y, 51) - 0.5) * 16, 92 + (h2(x, y, 51) - 0.5) * 16, 255), False),
+            ('reinforced_bunker_glass', lambda x, y, W, H: (48, 54, 62, 255) if (x in (0, 1, 14, 15) or y in (0, 1, 14, 15)) else ((215, 240, 250, 175) if (x - y) in (3, 4) else (140, 185, 208, 92)), True)
           ]
-          for nm, fn, is_glass in cubes:
-            save_png('src/main/resources/assets/realnukes/textures/block/' + nm + '.png', 16, 16, fn)
-            w('src/main/resources/assets/realnukes/blockstates/' + nm + '.json', json.dumps({'variants': {'': {'model': 'realnukes:block/' + nm}}}))
+          for nm, fn, gl in cubes:
+            png(A + 'textures/block/' + nm + '.png', 16, 16, fn)
+            w(A + 'blockstates/' + nm + '.json', json.dumps({'variants': {'': {'model': 'realnukes:block/' + nm}}}))
             mdl = {'parent': 'minecraft:block/cube_all', 'textures': {'all': 'realnukes:block/' + nm}}
-            if is_glass:
+            if gl:
               mdl['render_type'] = 'translucent'
-            w('src/main/resources/assets/realnukes/models/block/' + nm + '.json', json.dumps(mdl))
-            w('src/main/resources/assets/realnukes/models/item/' + nm + '.json', json.dumps({'parent': 'realnukes:block/' + nm}))
+            w(A + 'models/block/' + nm + '.json', json.dumps(mdl))
+            w(A + 'models/item/' + nm + '.json', json.dumps({'parent': 'realnukes:block/' + nm}))
 
-          def mk_grenade(x, y, w0, h0):
-            if 6 <= x <= 9 and 2 <= y <= 4:
-              return (230, 55, 45, 255)
-            if 5 <= x <= 10 and 5 <= y <= 11:
-              if y in (7, 8):
-                return (235, 200, 35, 255) if (x % 2 == 0) else (28, 28, 30, 255)
-              return (72, 92, 62, 255)
-            if (x in (4, 11) and 10 <= y <= 13) or (6 <= x <= 9 and 12 <= y <= 13):
-              return (52, 60, 48, 255)
-            return (0, 0, 0, 0)
-
-          def mk_orbital(x, y, w0, h0):
-            if 3 <= x <= 12 and 5 <= y <= 12:
-              if 6 <= x <= 9 and 6 <= y <= 8:
-                return (255, 45, 45, 255)
-              if 5 <= x <= 10 and 10 <= y <= 11:
-                return (65, 235, 130, 255)
-              return (54, 62, 74, 255)
-            if 7 <= x <= 8 and 1 <= y <= 4:
-              return (200, 210, 220, 255)
-            if x == 7 and y == 1:
-              return (255, 60, 60, 255)
-            return (0, 0, 0, 0)
-
-          def mk_remote(x, y, w0, h0):
-            if x == 11 and 1 <= y <= 6:
-              return (180, 190, 200, 255)
-            if 4 <= x <= 12 and 6 <= y <= 14:
-              if 6 <= x <= 9 and 8 <= y <= 10:
-                return (235, 35, 35, 255)
-              if x == 5 and y == 7:
-                return (70, 255, 95, 255)
-              return (72, 76, 84, 255)
-            return (0, 0, 0, 0)
-
-          def mk_geiger(x, y, w0, h0):
-            if 3 <= x <= 11 and 5 <= y <= 14:
-              if 5 <= x <= 9 and 7 <= y <= 9:
-                return (220, 240, 215, 255) if not (x == 7 and y == 8) else (220, 35, 35, 255)
-              if y == 12 and x in (5, 7, 9):
-                return (30, 30, 32, 255)
-              return (235, 195, 30, 255)
-            if (x == 13 and 2 <= y <= 12) or (x == 12 and y == 12):
-              return (45, 48, 52, 255)
-            return (0, 0, 0, 0)
-
-          def mk_pill(x, y, w0, h0):
-            d = abs((x - 7.5) + (y - 7.5))
-            t = (x - 7.5) - (y - 7.5)
-            if d <= 2.4 and abs(t) <= 4.2:
-              if t < 0:
-                return (230, 55, 65, 255)
-              return (235, 248, 255, 255)
-            return (0, 0, 0, 0)
-
-          def mk_h_helm(x, y, w0, h0):
-            if 3 <= x <= 12 and 3 <= y <= 12:
-              if 5 <= x <= 10 and 6 <= y <= 9:
-                return (32, 42, 54, 255) if not (x == 6 and y == 7) else (120, 175, 200, 255)
-              if y == 11 and 6 <= x <= 9:
-                return (38, 38, 42, 255)
-              return (238, 202, 28, 255)
-            return (0, 0, 0, 0)
-
-          def mk_h_chest(x, y, w0, h0):
-            if (2 <= x <= 13 and 3 <= y <= 7) or (4 <= x <= 11 and 3 <= y <= 13):
-              if 6 <= x <= 9 and 5 <= y <= 8:
-                return (34, 34, 38, 255) if (x + y) % 2 == 0 else (238, 202, 28, 255)
-              if y == 11:
-                return (40, 40, 44, 255)
-              return (238, 202, 28, 255)
-            return (0, 0, 0, 0)
-
-          def mk_h_legs(x, y, w0, h0):
-            if (4 <= x <= 11 and 3 <= y <= 6) or (4 <= x <= 7 and 6 <= y <= 13) or (8 <= x <= 11 and 6 <= y <= 13):
-              if y == 3 or y == 10:
-                return (40, 40, 44, 255)
-              return (232, 194, 26, 255)
-            return (0, 0, 0, 0)
-
-          def mk_h_boots(x, y, w0, h0):
-            if (3 <= x <= 6 and 7 <= y <= 13) or (9 <= x <= 12 and 7 <= y <= 13):
-              if y >= 11:
-                return (34, 36, 40, 255)
-              return (230, 192, 25, 255)
-            return (0, 0, 0, 0)
-
-          items = [
-            ('mini_nuke_grenade', mk_grenade),
-            ('orbital_designator', mk_orbital),
-            ('remote_detonator', mk_remote),
-            ('geiger_counter', mk_geiger),
-            ('antirad_pill', mk_pill),
-            ('hazmat_helmet', mk_h_helm),
-            ('hazmat_chestplate', mk_h_chest),
-            ('hazmat_leggings', mk_h_legs),
-            ('hazmat_boots', mk_h_boots)
+          its = [
+            ('mini_nuke_grenade', lambda x, y, W, H: (230, 55, 45, 255) if (6 <= x <= 9 and 2 <= y <= 4) else (((235, 200, 35, 255) if x % 2 == 0 else (28, 28, 30, 255)) if (5 <= x <= 10 and y in (7, 8)) else ((72, 92, 62, 255) if (5 <= x <= 10 and 5 <= y <= 11) else ((52, 60, 48, 255) if (4 <= x <= 11 and 12 <= y <= 13) else (0, 0, 0, 0))))),
+            ('orbital_designator', lambda x, y, W, H: (255, 45, 45, 255) if (6 <= x <= 9 and 6 <= y <= 8) else ((65, 235, 130, 255) if (5 <= x <= 10 and 10 <= y <= 11) else ((54, 62, 74, 255) if (3 <= x <= 12 and 5 <= y <= 12) else ((210, 220, 230, 255) if (7 <= x <= 8 and 1 <= y <= 4) else (0, 0, 0, 0))))),
+            ('remote_detonator', lambda x, y, W, H: (185, 195, 205, 255) if (x == 11 and 1 <= y <= 6) else ((235, 35, 35, 255) if (6 <= x <= 9 and 8 <= y <= 10) else ((70, 255, 95, 255) if (x == 5 and y == 7) else ((72, 76, 84, 255) if (4 <= x <= 12 and 6 <= y <= 14) else (0, 0, 0, 0))))),
+            ('geiger_counter', lambda x, y, W, H: (220, 35, 35, 255) if (x == 7 and y == 8) else ((220, 240, 215, 255) if (5 <= x <= 9 and 7 <= y <= 9) else ((235, 195, 30, 255) if (3 <= x <= 11 and 5 <= y <= 14) else ((45, 48, 52, 255) if (x == 13 and 2 <= y <= 12) else (0, 0, 0, 0))))),
+            ('antirad_pill', lambda x, y, W, H: ((230, 55, 65, 255) if (x - y) < 0 else (238, 248, 255, 255)) if (abs((x - 7.5) + (y - 7.5)) <= 2.4 and abs((x - 7.5) - (y - 7.5)) <= 4.2) else (0, 0, 0, 0)),
+            ('hazmat_helmet', lambda x, y, W, H: (32, 42, 54, 255) if (5 <= x <= 10 and 6 <= y <= 9) else ((238, 202, 28, 255) if (3 <= x <= 12 and 3 <= y <= 12) else (0, 0, 0, 0))),
+            ('hazmat_chestplate', lambda x, y, W, H: (38, 38, 42, 255) if (y == 11 and 4 <= x <= 11) else ((238, 202, 28, 255) if ((2 <= x <= 13 and 3 <= y <= 7) or (4 <= x <= 11 and 3 <= y <= 13)) else (0, 0, 0, 0))),
+            ('hazmat_leggings', lambda x, y, W, H: (40, 40, 44, 255) if (y == 3 and 4 <= x <= 11) else ((232, 194, 26, 255) if ((4 <= x <= 11 and 3 <= y <= 6) or (4 <= x <= 7 and 6 <= y <= 13) or (8 <= x <= 11 and 6 <= y <= 13)) else (0, 0, 0, 0))),
+            ('hazmat_boots', lambda x, y, W, H: (34, 36, 40, 255) if (y >= 11 and ((3 <= x <= 6) or (9 <= x <= 12)) and y <= 13) else ((230, 192, 25, 255) if (7 <= y <= 10 and ((3 <= x <= 6) or (9 <= x <= 12))) else (0, 0, 0, 0)))
           ]
-          for nm, fn in items:
-            save_png('src/main/resources/assets/realnukes/textures/item/' + nm + '.png', 16, 16, fn)
-            w('src/main/resources/assets/realnukes/models/item/' + nm + '.json', json.dumps({'parent': 'minecraft:item/generated', 'textures': {'layer0': 'realnukes:item/' + nm}}))
+          for nm, fn in its:
+            png(A + 'textures/item/' + nm + '.png', 16, 16, fn)
+            w(A + 'models/item/' + nm + '.json', json.dumps({'parent': 'minecraft:item/generated', 'textures': {'layer0': 'realnukes:item/' + nm}}))
 
-          def mk_arm1(x, y, w0, h0):
-            if 9 <= x <= 14 and 10 <= y <= 13:
-              return (28, 38, 48, 255)
-            if 20 <= x <= 27 and 27 <= y <= 29:
-              return (36, 36, 40, 255)
-            if 0 <= x <= 15 and 26 <= y <= 31:
-              return (34, 36, 40, 255)
-            return (236, 198, 28, 255)
+          png(A + 'textures/models/armor/hazmat_layer_1.png', 64, 32, lambda x, y, W, H: (28, 38, 48, 255) if (9 <= x <= 14 and 10 <= y <= 13) else ((34, 36, 40, 255) if y >= 27 else (236, 198, 28, 255)))
+          png(A + 'textures/models/armor/hazmat_layer_2.png', 64, 32, lambda x, y, W, H: (42, 42, 46, 255) if y in (16, 17, 24, 25) else (226, 188, 24, 255))
 
-          def mk_arm2(x, y, w0, h0):
-            if y in (16, 17, 24, 25):
-              return (42, 42, 46, 255)
-            return (226, 188, 24, 255)
+          # --- ATLAS VOLUMETRICO 128x128 (4 TILES COUVE-FLOR + fBm) ---
+          lobes = [
+            [(0.0, 0.0, 0.56), (-0.32, -0.16, 0.40), (0.34, -0.12, 0.42), (-0.18, 0.32, 0.38), (0.26, 0.28, 0.36), (0.02, -0.34, 0.35), (-0.38, 0.16, 0.32), (0.38, 0.12, 0.30)],
+            [(0.04, -0.04, 0.54), (-0.34, 0.08, 0.42), (0.30, -0.24, 0.40), (-0.14, -0.34, 0.38), (0.34, 0.20, 0.38), (-0.22, 0.34, 0.34), (0.08, 0.36, 0.32), (-0.40, -0.18, 0.28)],
+            [(-0.04, 0.02, 0.55), (0.32, -0.18, 0.42), (-0.30, -0.26, 0.38), (0.22, 0.32, 0.40), (-0.32, 0.24, 0.36), (0.04, -0.36, 0.34), (0.40, 0.04, 0.30), (-0.08, 0.38, 0.32)],
+            [(0.0, 0.04, 0.54), (-0.28, -0.24, 0.42), (0.36, 0.02, 0.40), (-0.36, 0.14, 0.38), (0.16, -0.34, 0.36), (0.24, 0.32, 0.36), (-0.16, 0.34, 0.34), (0.0, -0.22, 0.42)]
+          ]
 
-          save_png('src/main/resources/assets/realnukes/textures/models/armor/hazmat_layer_1.png', 64, 32, mk_arm1)
-          save_png('src/main/resources/assets/realnukes/textures/models/armor/hazmat_layer_2.png', 64, 32, mk_arm2)
+          def eval_billow(u, v, tid):
+            h = 0.0
+            for cx, cy, cr in lobes[tid]:
+              d = 1.0 - math.hypot(u - cx, v - cy) / cr
+              if d > 0:
+                s = d * d * (3.0 - 2.0 * d)
+                if s > h:
+                  h = s
+            return h
 
-          def mk_cloud_tex(x, y, w0, h0):
-            v = fbm(x, y, w0, h0, 77.0)
-            c = 175 + v * 80
-            return (c, c, c, 215 + v * 40)
+          def mk_atlas(x, y, W, H):
+            tx, ty = x // 64, y // 64
+            tid = ty * 2 + tx
+            u = ((x % 64) / 63.0) * 2.0 - 1.0
+            v = ((y % 64) / 63.0) * 2.0 - 1.0
+            rad = math.hypot(u, v)
+            if rad >= 0.98:
+              return (255, 255, 255, 0)
+            h0 = eval_billow(u, v, tid)
+            hx = eval_billow(u + 0.04, v, tid) - h0
+            hy = eval_billow(u, v + 0.04, tid) - h0
+            tb = fbm(x % 64, y % 64, 64, 64, tid * 31.0 + 13.0)
+            tb2 = fbm((x % 64) * 2, (y % 64) * 2, 64, 64, tid * 47.0 + 5.0)
+            dens = h0 + 0.34 * (tb - 0.45) + 0.14 * (tb2 - 0.5)
+            edge = max(0.0, min(1.0, (0.98 - rad) / 0.44))
+            edge = edge * edge * (3.0 - 2.0 * edge)
+            a = max(0.0, min(1.0, (dens - 0.12) * 2.6)) * edge
+            lit = max(0.42, min(1.0, 0.74 - hx * 2.4 + hy * 2.8 + (tb - 0.5) * 0.28 - v * 0.18))
+            c = lit * 255.0
+            return (c, c * 0.99, c * 0.97, a * 235.0)
 
-          def mk_fire_tex(x, y, w0, h0):
-            v = fbm(x, y, w0, h0, 99.0)
-            return (255, 165 + v * 90, 55 + v * 175, 220 + v * 35)
+          png(A + 'textures/entity/volumetric_cloud.png', 128, 128, mk_atlas)
 
-          def mk_ring_tex(x, y, w0, h0):
-            v = fbm(x, y, w0, h0, 123.0)
-            e = math.sin(math.pi * y / h0)
-            return (245, 248, 255, (140 + v * 90) * (e ** 0.7))
+          def mk_fire(x, y, W, H):
+            u = (x / 63.0) * 2.0 - 1.0
+            v = (y / 63.0) * 2.0 - 1.0
+            r = math.hypot(u, v)
+            if r >= 1.0:
+              return (255, 200, 100, 0)
+            n = fbm(x, y, 64, 64, 99.0)
+            f = max(0.0, 1.0 - r * r)
+            a = (f ** 1.6) * (0.55 + 0.45 * n) * 255.0
+            return (255, 155 + f * 100, 45 + (f ** 2) * 200, a)
 
-          def mk_missile_tex(x, y, w0, h0):
-            if y < 8:
-              return (225, 40, 40, 255)
-            if 12 <= y <= 16:
-              return (240, 200, 30, 255) if ((x // 4) % 2 == 0) else (25, 25, 28, 255)
-            return (205, 212, 222, 255)
+          png(A + 'textures/entity/fireball_core.png', 64, 64, mk_fire)
 
-          save_png('src/main/resources/assets/realnukes/textures/entity/volumetric_cloud.png', 64, 64, mk_cloud_tex)
-          save_png('src/main/resources/assets/realnukes/textures/entity/fireball_core.png', 64, 64, mk_fire_tex)
-          save_png('src/main/resources/assets/realnukes/textures/entity/shockwave_ring.png', 64, 64, mk_ring_tex)
-          save_png('src/main/resources/assets/realnukes/textures/entity/missile.png', 32, 32, mk_missile_tex)
+          def mk_ring(x, y, W, H):
+            n = fbm(x, y, 64, 64, 123.0)
+            e = math.sin(math.pi * y / 63.0)
+            return (248, 250, 255, (110 + n * 110) * (e ** 0.85))
 
-          # --- IDIOMAS ---
+          png(A + 'textures/entity/shockwave_ring.png', 64, 64, mk_ring)
+          png(A + 'textures/entity/missile.png', 32, 32, lambda x, y, W, H: (225, 40, 40, 255) if y < 8 else (((240, 200, 30, 255) if ((x // 4) % 2 == 0) else (24, 24, 28, 255)) if 12 <= y <= 16 else (205, 212, 222, 255)))
+
           pt = {
             'itemGroup.realnukes': 'RealNukes - Arsenal Nuclear',
             'block.realnukes.tactical_nuke': 'Mini-Nuke Tatica',
-            'block.realnukes.little_boy': 'Bomba Nuclear Little Boy',
-            'block.realnukes.fat_man': 'Bomba de Plutonio Fat Man',
-            'block.realnukes.hydrogen_bomb': 'Bomba Termonuclear de Hidrogenio',
-            'block.realnukes.tsar_bomba': 'Tsar Bomba (50 Megatons)',
-            'block.realnukes.neutron_bomb': 'Bomba de Neutrons (Pulso Rad)',
-            'block.realnukes.cobalt_bomb': 'Bomba de Cobalto Juizo Final',
+            'block.realnukes.little_boy': 'Bomba Little Boy',
+            'block.realnukes.fat_man': 'Bomba Fat Man',
+            'block.realnukes.hydrogen_bomb': 'Bomba Termonuclear H',
+            'block.realnukes.tsar_bomba': 'Tsar Bomba 50MT',
+            'block.realnukes.neutron_bomb': 'Bomba de Neutrons',
+            'block.realnukes.cobalt_bomb': 'Bomba de Cobalto',
             'block.realnukes.antimatter_bomb': 'Bomba de Antimateria',
             'block.realnukes.solar_bomb': 'Bomba de Plasma Solar',
             'block.realnukes.trinitite_block': 'Vidro de Trinitita',
             'block.realnukes.radioactive_ash': 'Cinza Radioativa',
-            'block.realnukes.uranium_ore_block': 'Bloco de Uranio Enriquecido',
-            'block.realnukes.plutonium_core_block': 'Nucleo de Plutonio',
-            'block.realnukes.lead_bunker_block': 'Bloco de Bunker de Chumbo',
+            'block.realnukes.lead_bunker_block': 'Bloco Bunker de Chumbo',
             'block.realnukes.reinforced_bunker_glass': 'Vidro Blindado de Bunker',
             'item.realnukes.mini_nuke_grenade': 'Granada Mini-Nuke',
-            'item.realnukes.orbital_designator': 'Designador de Ataque Orbital',
-            'item.realnukes.remote_detonator': 'Detonador Remoto Nuclear',
+            'item.realnukes.orbital_designator': 'Ataque Orbital Missil',
+            'item.realnukes.remote_detonator': 'Detonador Remoto',
             'item.realnukes.geiger_counter': 'Contador Geiger',
-            'item.realnukes.antirad_pill': 'Pilula Anti-Radiacao Rad-X',
+            'item.realnukes.antirad_pill': 'Pilula Rad-X',
             'item.realnukes.hazmat_helmet': 'Capacete Hazmat',
             'item.realnukes.hazmat_chestplate': 'Peitoral Hazmat',
             'item.realnukes.hazmat_leggings': 'Calca Hazmat',
-            'item.realnukes.hazmat_boots': 'Botas Hazmat',
-            'msg.realnukes.hint': 'Use Isqueiro, Redstone ou Detonador Remoto para detonar!'
+            'item.realnukes.hazmat_boots': 'Botas Hazmat'
           }
-          en = {
-            'itemGroup.realnukes': 'RealNukes - Nuclear Arsenal',
-            'block.realnukes.tactical_nuke': 'Tactical Mini-Nuke',
-            'block.realnukes.little_boy': 'Little Boy Fission Bomb',
-            'block.realnukes.fat_man': 'Fat Man Plutonium Bomb',
-            'block.realnukes.hydrogen_bomb': 'Thermonuclear Hydrogen Bomb',
-            'block.realnukes.tsar_bomba': 'Tsar Bomba (50 Megatons)',
-            'block.realnukes.neutron_bomb': 'Neutron Radiation Bomb',
-            'block.realnukes.cobalt_bomb': 'Doomsday Cobalt Bomb',
-            'block.realnukes.antimatter_bomb': 'Antimatter Warhead',
-            'block.realnukes.solar_bomb': 'Solar Plasma Bomb',
-            'block.realnukes.trinitite_block': 'Trinitite Glass',
-            'block.realnukes.radioactive_ash': 'Radioactive Ash',
-            'block.realnukes.uranium_ore_block': 'Enriched Uranium Block',
-            'block.realnukes.plutonium_core_block': 'Plutonium Core',
-            'block.realnukes.lead_bunker_block': 'Lead Bunker Block',
-            'block.realnukes.reinforced_bunker_glass': 'Reinforced Bunker Glass',
-            'item.realnukes.mini_nuke_grenade': 'Mini-Nuke Grenade',
-            'item.realnukes.orbital_designator': 'Orbital Strike Designator',
-            'item.realnukes.remote_detonator': 'Nuclear Remote Detonator',
-            'item.realnukes.geiger_counter': 'Geiger Counter',
-            'item.realnukes.antirad_pill': 'Rad-X Anti-Radiation Pill',
-            'item.realnukes.hazmat_helmet': 'Hazmat Helmet',
-            'item.realnukes.hazmat_chestplate': 'Hazmat Chestplate',
-            'item.realnukes.hazmat_leggings': 'Hazmat Leggings',
-            'item.realnukes.hazmat_boots': 'Hazmat Boots',
-            'msg.realnukes.hint': 'Use Flint and Steel, Redstone, or Remote Detonator to detonate!'
-          }
-          w('src/main/resources/assets/realnukes/lang/pt_br.json', json.dumps(pt, indent=2))
-          w('src/main/resources/assets/realnukes/lang/en_us.json', json.dumps(en, indent=2))
+          w(A + 'lang/pt_br.json', json.dumps(pt, indent=2))
+          w(A + 'lang/en_us.json', json.dumps(pt, indent=2))
 
           J = 'src/main/java/com/realnukes/'
 
-          # --- CLASSES JAVA ---
+          # --- RealNukesMod.java ---
           w(J + 'RealNukesMod.java', """
           package com.realnukes;
-          import net.minecraftforge.eventbus.api.IEventBus;
-          import net.minecraftforge.fml.common.Mod;
-          import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-          @Mod(RealNukesMod.MODID)
-          public class RealNukesMod {
-            public static final String MODID = "realnukes";
-            public RealNukesMod() {
-              IEventBus bus = FMLJavaModLoadingContext.get().getModEventBus();
-              ModBlocks.BLOCKS.register(bus);
-              ModItems.ITEMS.register(bus);
-              ModEntities.ENTITIES.register(bus);
-              ModCreativeTabs.TABS.register(bus);
-            }
-          }
-          """)
-
-          w(J + 'NukeType.java', """
-          package com.realnukes;
-          public enum NukeType {
-            TACTICAL(0, "tactical_nuke", 26, 52f, 24f, 540, 0.78f, 4.5f, 44, 45, 1.0f, 0.56f, 0.16f, 0.74f, 0.70f, 0.66f, 1, true, false, false, false),
-            LITTLE_BOY(1, "little_boy", 40, 86f, 38f, 700, 0.94f, 7.2f, 68, 70, 1.0f, 0.48f, 0.12f, 0.76f, 0.70f, 0.64f, 1, true, false, false, false),
-            FAT_MAN(2, "fat_man", 50, 102f, 46f, 780, 1.0f, 8.8f, 82, 85, 1.0f, 0.44f, 0.10f, 0.75f, 0.67f, 0.60f, 2, true, false, false, false),
-            HYDROGEN(3, "hydrogen_bomb", 66, 140f, 64f, 940, 1.0f, 11.5f, 106, 105, 1.0f, 0.66f, 0.24f, 0.86f, 0.82f, 0.78f, 2, true, false, false, false),
-            TSAR_BOMBA(4, "tsar_bomba", 84, 188f, 88f, 1200, 1.0f, 15.5f, 145, 135, 1.0f, 0.50f, 0.14f, 0.89f, 0.85f, 0.80f, 3, true, false, false, false),
-            NEUTRON(5, "neutron_bomb", 20, 58f, 26f, 580, 0.92f, 5.2f, 120, 150, 0.25f, 0.78f, 1.0f, 0.72f, 0.88f, 0.96f, 2, false, false, false, true),
-            COBALT(6, "cobalt_bomb", 44, 96f, 44f, 860, 0.90f, 7.8f, 132, 240, 0.22f, 1.0f, 0.36f, 0.45f, 0.58f, 0.42f, 2, true, false, false, false),
-            ANTIMATTER(7, "antimatter_bomb", 60, 128f, 58f, 800, 1.0f, 12.5f, 0, 0, 0.78f, 0.25f, 1.0f, 0.68f, 0.52f, 0.86f, 3, false, false, true, false),
-            SOLAR(8, "solar_bomb", 54, 120f, 54f, 880, 1.0f, 10.2f, 62, 55, 1.0f, 0.84f, 0.20f, 0.92f, 0.64f, 0.36f, 2, false, true, false, false),
-            MINI_GRENADE(9, "mini_nuke_grenade", 15, 34f, 16f, 420, 0.62f, 3.2f, 24, 25, 1.0f, 0.52f, 0.15f, 0.76f, 0.71f, 0.67f, 1, true, false, false, false);
-            public final int id, radius, duration, radRadius, radSec, wilsonRings;
-            public final String name;
-            public final float cloudH, cloudR, flash, shake, fr, fg, fb, sr, sg, sb;
-            public final boolean trinitite, lava, antimatter, neutron;
-            NukeType(int id, String name, int radius, float cloudH, float cloudR, int dur, float flash, float shake, int radR, int radS, float fr, float fg, float fb, float sr, float sg, float sb, int wr, boolean tri, boolean lava, boolean anti, boolean neu) {
-              this.id = id; this.name = name; this.radius = radius; this.cloudH = cloudH; this.cloudR = cloudR;
-              this.duration = dur; this.flash = flash; this.shake = shake; this.radRadius = radR; this.radSec = radS;
-              this.fr = fr; this.fg = fg; this.fb = fb; this.sr = sr; this.sg = sg; this.sb = sb;
-              this.wilsonRings = wr; this.trinitite = tri; this.lava = lava; this.antimatter = anti; this.neutron = neu;
-            }
-            public static NukeType byId(int i) {
-              NukeType[] v = values();
-              return v[Math.max(0, Math.min(v.length - 1, i))];
-            }
-          }
-          """)
-
-          w(J + 'NuclearBombBlock.java', """
-          package com.realnukes;
           import java.util.List;
+          import java.util.Locale;
           import javax.annotation.Nullable;
           import net.minecraft.ChatFormatting;
           import net.minecraft.core.BlockPos;
+          import net.minecraft.core.registries.Registries;
+          import net.minecraft.nbt.CompoundTag;
           import net.minecraft.network.chat.Component;
+          import net.minecraft.server.level.ServerLevel;
+          import net.minecraft.sounds.SoundEvent;
           import net.minecraft.sounds.SoundEvents;
           import net.minecraft.sounds.SoundSource;
           import net.minecraft.world.InteractionHand;
           import net.minecraft.world.InteractionResult;
+          import net.minecraft.world.InteractionResultHolder;
+          import net.minecraft.world.effect.MobEffectInstance;
+          import net.minecraft.world.effect.MobEffects;
+          import net.minecraft.world.entity.EntityType;
+          import net.minecraft.world.entity.EquipmentSlot;
+          import net.minecraft.world.entity.LivingEntity;
+          import net.minecraft.world.entity.MobCategory;
           import net.minecraft.world.entity.player.Player;
+          import net.minecraft.world.food.FoodProperties;
+          import net.minecraft.world.item.ArmorItem;
+          import net.minecraft.world.item.ArmorMaterial;
+          import net.minecraft.world.item.BlockItem;
+          import net.minecraft.world.item.CreativeModeTab;
+          import net.minecraft.world.item.Item;
           import net.minecraft.world.item.ItemStack;
           import net.minecraft.world.item.Items;
           import net.minecraft.world.item.TooltipFlag;
+          import net.minecraft.world.item.context.UseOnContext;
+          import net.minecraft.world.item.crafting.Ingredient;
           import net.minecraft.world.level.BlockGetter;
+          import net.minecraft.world.level.ClipContext;
           import net.minecraft.world.level.Explosion;
           import net.minecraft.world.level.Level;
-          import net.minecraft.world.level.block.Block;
-          import net.minecraft.world.level.block.state.BlockState;
-          import net.minecraft.world.phys.BlockHitResult;
-          public class NuclearBombBlock extends Block {
-            public final NukeType nukeType;
-            public NuclearBombBlock(NukeType type, Properties props) {
-              super(props);
-              this.nukeType = type;
-            }
-            public void primeBomb(Level level, BlockPos pos, int fuse) {
-              if (level.isClientSide) return;
-              level.removeBlock(pos, false);
-              PrimedNukeEntity e = new PrimedNukeEntity(ModEntities.PRIMED_NUKE.get(), level);
-              e.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
-              e.setNukeType(nukeType);
-              e.setFuse(fuse);
-              level.addFreshEntity(e);
-              level.playSound(null, pos, SoundEvents.TNT_PRIMED, SoundSource.BLOCKS, 1.5f, 0.7f);
-            }
-            @Override
-            public InteractionResult use(BlockState st, Level lv, BlockPos pos, Player p, InteractionHand hand, BlockHitResult hit) {
-              ItemStack it = p.getItemInHand(hand);
-              if (it.getItem() instanceof RemoteDetonatorItem) return InteractionResult.PASS;
-              if (it.is(Items.FLINT_AND_STEEL) || it.is(Items.FIRE_CHARGE) || it.is(Items.BLAZE_ROD)) {
-                if (!lv.isClientSide) primeBomb(lv, pos, p.isShiftKeyDown() ? 8 : 65);
-                return InteractionResult.sidedSuccess(lv.isClientSide);
-              }
-              if (!lv.isClientSide) p.displayClientMessage(Component.translatable("msg.realnukes.hint").withStyle(ChatFormatting.YELLOW), true);
-              return InteractionResult.sidedSuccess(lv.isClientSide);
-            }
-            @Override
-            public void onPlace(BlockState st, Level lv, BlockPos pos, BlockState oldSt, boolean mv) {
-              if (!lv.isClientSide && lv.hasNeighborSignal(pos)) primeBomb(lv, pos, 45);
-            }
-            @Override
-            public void neighborChanged(BlockState st, Level lv, BlockPos pos, Block blk, BlockPos from, boolean mv) {
-              if (!lv.isClientSide && lv.hasNeighborSignal(pos)) primeBomb(lv, pos, 45);
-            }
-            @Override
-            public void wasExploded(Level lv, BlockPos pos, Explosion ex) {
-              if (!lv.isClientSide) primeBomb(lv, pos, 12);
-            }
-            @Override
-            public void appendHoverText(ItemStack st, @Nullable BlockGetter bg, List<Component> tip, TooltipFlag fl) {
-              tip.add(Component.literal("Raio de Destruicao: " + nukeType.radius + " blocos").withStyle(ChatFormatting.RED));
-              tip.add(Component.literal("Altura da Nuvem 3D: " + (int)nukeType.cloudH + " blocos").withStyle(ChatFormatting.GOLD));
-              if (nukeType.radRadius > 0) tip.add(Component.literal("Radiacao: " + nukeType.radRadius + " blocos (" + nukeType.radSec + "s)").withStyle(ChatFormatting.GREEN));
-              tip.add(Component.literal("Detone com Isqueiro, Redstone ou Detonador Remoto").withStyle(ChatFormatting.GRAY));
-            }
-          }
-          """)
-
-          w(J + 'ModBlocks.java', """
-          package com.realnukes;
           import net.minecraft.world.level.block.Block;
           import net.minecraft.world.level.block.GlassBlock;
           import net.minecraft.world.level.block.SoundType;
           import net.minecraft.world.level.block.state.BlockBehaviour;
+          import net.minecraft.world.level.block.state.BlockState;
           import net.minecraft.world.level.material.MapColor;
+          import net.minecraft.world.phys.BlockHitResult;
+          import net.minecraft.world.phys.HitResult;
+          import net.minecraft.world.phys.Vec3;
+          import net.minecraftforge.eventbus.api.IEventBus;
+          import net.minecraftforge.fml.common.Mod;
+          import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
           import net.minecraftforge.registries.DeferredRegister;
           import net.minecraftforge.registries.ForgeRegistries;
           import net.minecraftforge.registries.RegistryObject;
-          public class ModBlocks {
-            public static final DeferredRegister<Block> BLOCKS = DeferredRegister.create(ForgeRegistries.BLOCKS, RealNukesMod.MODID);
-            private static BlockBehaviour.Properties bp() { return BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(2.5f, 6.0f).sound(SoundType.METAL); }
+
+          @Mod(RealNukesMod.MODID)
+          public class RealNukesMod {
+            public static final String MODID = "realnukes";
+
+            public enum NukeType {
+              TACTICAL(0, 26, 56f, 26f, 540, 0.78f, 4.8f, 44, 45, 1.0f, 0.56f, 0.16f, 0.76f, 0.72f, 0.68f, 1, true, false, false, false),
+              LITTLE_BOY(1, 40, 92f, 42f, 720, 0.94f, 7.6f, 68, 70, 1.0f, 0.48f, 0.12f, 0.78f, 0.72f, 0.66f, 1, true, false, false, false),
+              FAT_MAN(2, 50, 108f, 50f, 800, 1.0f, 9.2f, 82, 85, 1.0f, 0.44f, 0.10f, 0.76f, 0.69f, 0.62f, 2, true, false, false, false),
+              HYDROGEN(3, 66, 148f, 68f, 960, 1.0f, 12.0f, 106, 105, 1.0f, 0.66f, 0.24f, 0.88f, 0.84f, 0.80f, 2, true, false, false, false),
+              TSAR_BOMBA(4, 84, 196f, 92f, 1240, 1.0f, 16.0f, 145, 135, 1.0f, 0.50f, 0.14f, 0.91f, 0.87f, 0.82f, 3, true, false, false, false),
+              NEUTRON(5, 20, 62f, 28f, 600, 0.92f, 5.5f, 120, 150, 0.25f, 0.78f, 1.0f, 0.74f, 0.90f, 0.97f, 2, false, false, false, true),
+              COBALT(6, 44, 102f, 48f, 880, 0.90f, 8.2f, 132, 240, 0.22f, 1.0f, 0.36f, 0.48f, 0.62f, 0.44f, 2, true, false, false, false),
+              ANTIMATTER(7, 60, 136f, 62f, 840, 1.0f, 13.0f, 0, 0, 0.78f, 0.25f, 1.0f, 0.70f, 0.54f, 0.88f, 3, false, false, true, false),
+              SOLAR(8, 54, 126f, 58f, 900, 1.0f, 10.8f, 62, 55, 1.0f, 0.84f, 0.20f, 0.94f, 0.68f, 0.38f, 2, false, true, false, false),
+              MINI_GRENADE(9, 15, 36f, 17f, 420, 0.62f, 3.4f, 24, 25, 1.0f, 0.52f, 0.15f, 0.78f, 0.73f, 0.68f, 1, true, false, false, false);
+
+              public final int id, radius, dur, radR, radS, rings;
+              public final float cloudH, cloudR, flash, shake, fr, fg, fb, sr, sg, sb;
+              public final boolean tri, lava, anti, neu;
+
+              NukeType(int id, int radius, float cloudH, float cloudR, int dur, float flash, float shake, int radR, int radS, float fr, float fg, float fb, float sr, float sg, float sb, int rings, boolean tri, boolean lava, boolean anti, boolean neu) {
+                this.id = id; this.radius = radius; this.cloudH = cloudH; this.cloudR = cloudR; this.dur = dur;
+                this.flash = flash; this.shake = shake; this.radR = radR; this.radS = radS;
+                this.fr = fr; this.fg = fg; this.fb = fb; this.sr = sr; this.sg = sg; this.sb = sb;
+                this.rings = rings; this.tri = tri; this.lava = lava; this.anti = anti; this.neu = neu;
+              }
+              public static NukeType byId(int i) {
+                NukeType[] v = values();
+                return v[Math.max(0, Math.min(v.length - 1, i))];
+              }
+            }
+
+            public static final DeferredRegister<Block> BLOCKS = DeferredRegister.create(ForgeRegistries.BLOCKS, MODID);
+            public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, MODID);
+            public static final DeferredRegister<EntityType<?>> ENTITIES = DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, MODID);
+            public static final DeferredRegister<CreativeModeTab> TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
+
+            private static BlockBehaviour.Properties bp() {
+              return BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(2.5f, 6.0f).sound(SoundType.METAL);
+            }
+
             public static final RegistryObject<Block> TACTICAL_NUKE = BLOCKS.register("tactical_nuke", () -> new NuclearBombBlock(NukeType.TACTICAL, bp()));
             public static final RegistryObject<Block> LITTLE_BOY = BLOCKS.register("little_boy", () -> new NuclearBombBlock(NukeType.LITTLE_BOY, bp()));
             public static final RegistryObject<Block> FAT_MAN = BLOCKS.register("fat_man", () -> new NuclearBombBlock(NukeType.FAT_MAN, bp()));
@@ -626,11 +421,83 @@ jobs:
             public static final RegistryObject<Block> SOLAR_BOMB = BLOCKS.register("solar_bomb", () -> new NuclearBombBlock(NukeType.SOLAR, bp().lightLevel(s -> 10)));
             public static final RegistryObject<Block> TRINITITE_BLOCK = BLOCKS.register("trinitite_block", () -> new Block(BlockBehaviour.Properties.of().mapColor(MapColor.EMERALD).strength(1.5f, 4.0f).sound(SoundType.GLASS).lightLevel(s -> 5)));
             public static final RegistryObject<Block> RADIOACTIVE_ASH = BLOCKS.register("radioactive_ash", () -> new Block(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BLACK).strength(0.8f, 2.0f).sound(SoundType.SAND).lightLevel(s -> 2)));
-            public static final RegistryObject<Block> URANIUM_ORE_BLOCK = BLOCKS.register("uranium_ore_block", () -> new Block(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_GREEN).strength(4.0f, 8.0f).sound(SoundType.METAL).lightLevel(s -> 5)));
-            public static final RegistryObject<Block> PLUTONIUM_CORE_BLOCK = BLOCKS.register("plutonium_core_block", () -> new Block(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_CYAN).strength(4.5f, 10.0f).sound(SoundType.METAL).lightLevel(s -> 9)));
             public static final RegistryObject<Block> LEAD_BUNKER_BLOCK = BLOCKS.register("lead_bunker_block", () -> new Block(BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_GRAY).strength(25.0f, 2400.0f).sound(SoundType.NETHERITE_BLOCK)));
             public static final RegistryObject<Block> REINFORCED_BUNKER_GLASS = BLOCKS.register("reinforced_bunker_glass", () -> new GlassBlock(BlockBehaviour.Properties.of().mapColor(MapColor.NONE).strength(18.0f, 2400.0f).sound(SoundType.GLASS).noOcclusion().isViewBlocking((s, g, p) -> false).isSuffocating((s, g, p) -> false)));
-            public static Block getBlockForType(NukeType t) {
+
+            private static RegistryObject<Item> bi(String n, RegistryObject<Block> b) {
+              return ITEMS.register(n, () -> new BlockItem(b.get(), new Item.Properties()));
+            }
+
+            public static final RegistryObject<Item> I_TACTICAL = bi("tactical_nuke", TACTICAL_NUKE);
+            public static final RegistryObject<Item> I_LITTLE_BOY = bi("little_boy", LITTLE_BOY);
+            public static final RegistryObject<Item> I_FAT_MAN = bi("fat_man", FAT_MAN);
+            public static final RegistryObject<Item> I_HYDROGEN = bi("hydrogen_bomb", HYDROGEN_BOMB);
+            public static final RegistryObject<Item> I_TSAR = bi("tsar_bomba", TSAR_BOMBA);
+            public static final RegistryObject<Item> I_NEUTRON = bi("neutron_bomb", NEUTRON_BOMB);
+            public static final RegistryObject<Item> I_COBALT = bi("cobalt_bomb", COBALT_BOMB);
+            public static final RegistryObject<Item> I_ANTIMATTER = bi("antimatter_bomb", ANTIMATTER_BOMB);
+            public static final RegistryObject<Item> I_SOLAR = bi("solar_bomb", SOLAR_BOMB);
+            public static final RegistryObject<Item> I_TRINITITE = bi("trinitite_block", TRINITITE_BLOCK);
+            public static final RegistryObject<Item> I_ASH = bi("radioactive_ash", RADIOACTIVE_ASH);
+            public static final RegistryObject<Item> I_BUNKER = bi("lead_bunker_block", LEAD_BUNKER_BLOCK);
+            public static final RegistryObject<Item> I_BGLASS = bi("reinforced_bunker_glass", REINFORCED_BUNKER_GLASS);
+
+            public static final RegistryObject<Item> MINI_NUKE_GRENADE = ITEMS.register("mini_nuke_grenade", () -> new MiniNukeGrenadeItem(new Item.Properties().stacksTo(16)));
+            public static final RegistryObject<Item> ORBITAL_DESIGNATOR = ITEMS.register("orbital_designator", () -> new OrbitalDesignatorItem(new Item.Properties().stacksTo(1)));
+            public static final RegistryObject<Item> REMOTE_DETONATOR = ITEMS.register("remote_detonator", () -> new RemoteDetonatorItem(new Item.Properties().stacksTo(1)));
+            public static final RegistryObject<Item> GEIGER_COUNTER = ITEMS.register("geiger_counter", () -> new GeigerCounterItem(new Item.Properties().stacksTo(1)));
+            public static final RegistryObject<Item> ANTIRAD_PILL = ITEMS.register("antirad_pill", () -> new AntiRadPillItem(new Item.Properties().stacksTo(32)));
+            public static final RegistryObject<Item> HAZMAT_HELMET = ITEMS.register("hazmat_helmet", () -> new ArmorItem(HazmatMat.INSTANCE, ArmorItem.Type.HELMET, new Item.Properties()));
+            public static final RegistryObject<Item> HAZMAT_CHESTPLATE = ITEMS.register("hazmat_chestplate", () -> new ArmorItem(HazmatMat.INSTANCE, ArmorItem.Type.CHESTPLATE, new Item.Properties()));
+            public static final RegistryObject<Item> HAZMAT_LEGGINGS = ITEMS.register("hazmat_leggings", () -> new ArmorItem(HazmatMat.INSTANCE, ArmorItem.Type.LEGGINGS, new Item.Properties()));
+            public static final RegistryObject<Item> HAZMAT_BOOTS = ITEMS.register("hazmat_boots", () -> new ArmorItem(HazmatMat.INSTANCE, ArmorItem.Type.BOOTS, new Item.Properties()));
+
+            public static final RegistryObject<EntityType<NukeEntities.NuclearCloudEntity>> NUCLEAR_CLOUD = ENTITIES.register("nuclear_cloud",
+              () -> EntityType.Builder.of(NukeEntities.NuclearCloudEntity::new, MobCategory.MISC).sized(4.0f, 4.0f).fireImmune().clientTrackingRange(32).updateInterval(2).build("nuclear_cloud"));
+            public static final RegistryObject<EntityType<NukeEntities.PrimedNukeEntity>> PRIMED_NUKE = ENTITIES.register("primed_nuke",
+              () -> EntityType.Builder.of(NukeEntities.PrimedNukeEntity::new, MobCategory.MISC).sized(0.98f, 0.98f).clientTrackingRange(16).updateInterval(2).build("primed_nuke"));
+            public static final RegistryObject<EntityType<NukeEntities.MiniNukeGrenadeEntity>> MINI_GRENADE_ENT = ENTITIES.register("mini_nuke_grenade",
+              () -> EntityType.Builder.<NukeEntities.MiniNukeGrenadeEntity>of(NukeEntities.MiniNukeGrenadeEntity::new, MobCategory.MISC).sized(0.25f, 0.25f).clientTrackingRange(8).updateInterval(4).build("mini_nuke_grenade"));
+            public static final RegistryObject<EntityType<NukeEntities.FallingMissileEntity>> FALLING_MISSILE = ENTITIES.register("falling_missile",
+              () -> EntityType.Builder.of(NukeEntities.FallingMissileEntity::new, MobCategory.MISC).sized(0.9f, 4.5f).clientTrackingRange(24).updateInterval(1).build("falling_missile"));
+
+            public static final RegistryObject<CreativeModeTab> REALNUKES_TAB = TABS.register("realnukes_tab", () -> CreativeModeTab.builder()
+              .title(Component.translatable("itemGroup.realnukes"))
+              .icon(() -> new ItemStack(I_TSAR.get()))
+              .displayItems((p, out) -> {
+                out.accept(I_TACTICAL.get());
+                out.accept(I_LITTLE_BOY.get());
+                out.accept(I_FAT_MAN.get());
+                out.accept(I_HYDROGEN.get());
+                out.accept(I_TSAR.get());
+                out.accept(I_NEUTRON.get());
+                out.accept(I_COBALT.get());
+                out.accept(I_ANTIMATTER.get());
+                out.accept(I_SOLAR.get());
+                out.accept(MINI_NUKE_GRENADE.get());
+                out.accept(ORBITAL_DESIGNATOR.get());
+                out.accept(REMOTE_DETONATOR.get());
+                out.accept(GEIGER_COUNTER.get());
+                out.accept(ANTIRAD_PILL.get());
+                out.accept(HAZMAT_HELMET.get());
+                out.accept(HAZMAT_CHESTPLATE.get());
+                out.accept(HAZMAT_LEGGINGS.get());
+                out.accept(HAZMAT_BOOTS.get());
+                out.accept(I_BUNKER.get());
+                out.accept(I_BGLASS.get());
+                out.accept(I_TRINITITE.get());
+                out.accept(I_ASH.get());
+              }).build());
+
+            public RealNukesMod() {
+              IEventBus bus = FMLJavaModLoadingContext.get().getModEventBus();
+              BLOCKS.register(bus);
+              ITEMS.register(bus);
+              ENTITIES.register(bus);
+              TABS.register(bus);
+            }
+
+            public static Block blockFor(NukeType t) {
               switch (t) {
                 case LITTLE_BOY: return LITTLE_BOY.get();
                 case FAT_MAN: return FAT_MAN.get();
@@ -643,353 +510,218 @@ jobs:
                 default: return TACTICAL_NUKE.get();
               }
             }
-          }
-          """)
 
-          w(J + 'HazmatArmorMaterial.java', """
-          package com.realnukes;
-          import net.minecraft.sounds.SoundEvent;
-          import net.minecraft.sounds.SoundEvents;
-          import net.minecraft.world.entity.EquipmentSlot;
-          import net.minecraft.world.entity.LivingEntity;
-          import net.minecraft.world.item.ArmorItem;
-          import net.minecraft.world.item.ArmorMaterial;
-          import net.minecraft.world.item.Items;
-          import net.minecraft.world.item.crafting.Ingredient;
-          public class HazmatArmorMaterial implements ArmorMaterial {
-            public static final HazmatArmorMaterial INSTANCE = new HazmatArmorMaterial();
-            private static final int[] DUR = {320, 480, 420, 350};
-            private static final int[] DEF = {3, 7, 5, 3};
-            @Override public int getDurabilityForType(ArmorItem.Type t) { return DUR[t.getSlot().getIndex()]; }
-            @Override public int getDefenseForType(ArmorItem.Type t) { return DEF[t.getSlot().getIndex()]; }
-            @Override public int getEnchantmentValue() { return 12; }
-            @Override public SoundEvent getEquipSound() { return SoundEvents.ARMOR_EQUIP_IRON; }
-            @Override public Ingredient getRepairIngredient() { return Ingredient.of(Items.IRON_INGOT); }
-            @Override public String getName() { return "realnukes:hazmat"; }
-            @Override public float getToughness() { return 1.5f; }
-            @Override public float getKnockbackResistance() { return 0.1f; }
-            public static boolean hasFullHazmat(LivingEntity e) {
-              return e.getItemBySlot(EquipmentSlot.HEAD).is(ModItems.HAZMAT_HELMET.get())
-                && e.getItemBySlot(EquipmentSlot.CHEST).is(ModItems.HAZMAT_CHESTPLATE.get())
-                && e.getItemBySlot(EquipmentSlot.LEGS).is(ModItems.HAZMAT_LEGGINGS.get())
-                && e.getItemBySlot(EquipmentSlot.FEET).is(ModItems.HAZMAT_BOOTS.get());
+            public static boolean hasHazmat(LivingEntity e) {
+              return e.getItemBySlot(EquipmentSlot.HEAD).is(HAZMAT_HELMET.get())
+                && e.getItemBySlot(EquipmentSlot.CHEST).is(HAZMAT_CHESTPLATE.get())
+                && e.getItemBySlot(EquipmentSlot.LEGS).is(HAZMAT_LEGGINGS.get())
+                && e.getItemBySlot(EquipmentSlot.FEET).is(HAZMAT_BOOTS.get());
             }
-          }
-          """)
 
-          w(J + 'MiniNukeGrenadeItem.java', """
-          package com.realnukes;
-          import net.minecraft.sounds.SoundEvents;
-          import net.minecraft.sounds.SoundSource;
-          import net.minecraft.world.InteractionHand;
-          import net.minecraft.world.InteractionResultHolder;
-          import net.minecraft.world.entity.player.Player;
-          import net.minecraft.world.item.Item;
-          import net.minecraft.world.item.ItemStack;
-          import net.minecraft.world.level.Level;
-          public class MiniNukeGrenadeItem extends Item {
-            public MiniNukeGrenadeItem(Properties p) { super(p); }
-            @Override
-            public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
-              ItemStack st = p.getItemInHand(h);
-              lv.playSound(null, p.getX(), p.getY(), p.getZ(), SoundEvents.SNOWBALL_THROW, SoundSource.PLAYERS, 0.8f, 0.6f);
-              p.getCooldowns().addCooldown(this, 20);
-              if (!lv.isClientSide) {
-                MiniNukeGrenadeEntity e = new MiniNukeGrenadeEntity(lv, p);
-                e.setItem(st);
-                e.shootFromRotation(p, p.getXRot(), p.getYRot(), 0.0f, 1.55f, 0.8f);
+            public static class HazmatMat implements ArmorMaterial {
+              public static final HazmatMat INSTANCE = new HazmatMat();
+              private static final int[] DUR = {320, 480, 420, 350};
+              private static final int[] DEF = {3, 7, 5, 3};
+              @Override public int getDurabilityForType(ArmorItem.Type t) { return DUR[t.getSlot().getIndex()]; }
+              @Override public int getDefenseForType(ArmorItem.Type t) { return DEF[t.getSlot().getIndex()]; }
+              @Override public int getEnchantmentValue() { return 12; }
+              @Override public SoundEvent getEquipSound() { return SoundEvents.ARMOR_EQUIP_IRON; }
+              @Override public Ingredient getRepairIngredient() { return Ingredient.of(Items.IRON_INGOT); }
+              @Override public String getName() { return "realnukes:hazmat"; }
+              @Override public float getToughness() { return 1.5f; }
+              @Override public float getKnockbackResistance() { return 0.1f; }
+            }
+
+            public static class NuclearBombBlock extends Block {
+              public final NukeType nukeType;
+              public NuclearBombBlock(NukeType type, Properties props) {
+                super(props);
+                this.nukeType = type;
+              }
+              public void prime(Level lv, BlockPos pos, int fuse) {
+                if (lv.isClientSide) return;
+                lv.removeBlock(pos, false);
+                NukeEntities.PrimedNukeEntity e = new NukeEntities.PrimedNukeEntity(PRIMED_NUKE.get(), lv);
+                e.setPos(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+                e.setNukeType(nukeType);
+                e.setFuse(fuse);
                 lv.addFreshEntity(e);
+                lv.playSound(null, pos, SoundEvents.TNT_PRIMED, SoundSource.BLOCKS, 1.5f, 0.7f);
               }
-              if (!p.getAbilities().instabuild) st.shrink(1);
-              return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
-            }
-          }
-          """)
-
-          w(J + 'OrbitalDesignatorItem.java', """
-          package com.realnukes;
-          import java.util.List;
-          import javax.annotation.Nullable;
-          import net.minecraft.ChatFormatting;
-          import net.minecraft.network.chat.Component;
-          import net.minecraft.sounds.SoundEvents;
-          import net.minecraft.sounds.SoundSource;
-          import net.minecraft.world.InteractionHand;
-          import net.minecraft.world.InteractionResultHolder;
-          import net.minecraft.world.entity.player.Player;
-          import net.minecraft.world.item.Item;
-          import net.minecraft.world.item.ItemStack;
-          import net.minecraft.world.item.TooltipFlag;
-          import net.minecraft.world.level.ClipContext;
-          import net.minecraft.world.level.Level;
-          import net.minecraft.world.phys.BlockHitResult;
-          import net.minecraft.world.phys.HitResult;
-          import net.minecraft.world.phys.Vec3;
-          public class OrbitalDesignatorItem extends Item {
-            public OrbitalDesignatorItem(Properties p) { super(p); }
-            @Override
-            public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
-              ItemStack st = p.getItemInHand(h);
-              Vec3 start = p.getEyePosition();
-              Vec3 end = start.add(p.getLookAngle().scale(160.0));
-              BlockHitResult hit = lv.clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.ANY, p));
-              if (hit.getType() == HitResult.Type.MISS) {
-                if (!lv.isClientSide) p.displayClientMessage(Component.literal("Mire em um bloco a ate 160 blocos!").withStyle(ChatFormatting.RED), true);
-                return InteractionResultHolder.fail(st);
-              }
-              p.getCooldowns().addCooldown(this, 60);
-              if (!lv.isClientSide) {
-                Vec3 loc = hit.getLocation();
-                FallingMissileEntity m = new FallingMissileEntity(ModEntities.FALLING_MISSILE.get(), lv);
-                m.setPos(loc.x, Math.min(lv.getMaxBuildHeight() + 60.0, loc.y + 135.0), loc.z);
-                lv.addFreshEntity(m);
-                lv.playSound(null, p.blockPosition(), SoundEvents.BEACON_ACTIVATE, SoundSource.PLAYERS, 1.5f, 1.4f);
-                p.displayClientMessage(Component.literal("ATAQUE ORBITAL CONFIRMADO! Missil termonuclear a caminho!").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), true);
-              }
-              return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
-            }
-            @Override
-            public void appendHoverText(ItemStack st, @Nullable Level lv, List<Component> tip, TooltipFlag fl) {
-              tip.add(Component.literal("Mire no alvo e clique direito para chamar um missil do ceu!").withStyle(ChatFormatting.GOLD));
-            }
-          }
-          """)
-
-          w(J + 'RemoteDetonatorItem.java', """
-          package com.realnukes;
-          import java.util.List;
-          import javax.annotation.Nullable;
-          import net.minecraft.ChatFormatting;
-          import net.minecraft.core.BlockPos;
-          import net.minecraft.nbt.CompoundTag;
-          import net.minecraft.network.chat.Component;
-          import net.minecraft.sounds.SoundEvents;
-          import net.minecraft.sounds.SoundSource;
-          import net.minecraft.world.InteractionHand;
-          import net.minecraft.world.InteractionResult;
-          import net.minecraft.world.InteractionResultHolder;
-          import net.minecraft.world.entity.player.Player;
-          import net.minecraft.world.item.Item;
-          import net.minecraft.world.item.ItemStack;
-          import net.minecraft.world.item.TooltipFlag;
-          import net.minecraft.world.item.context.UseOnContext;
-          import net.minecraft.world.level.Level;
-          import net.minecraft.world.level.block.state.BlockState;
-          public class RemoteDetonatorItem extends Item {
-            public RemoteDetonatorItem(Properties p) { super(p); }
-            @Override
-            public InteractionResult useOn(UseOnContext ctx) {
-              Level lv = ctx.getLevel();
-              BlockPos pos = ctx.getClickedPos();
-              if (lv.getBlockState(pos).getBlock() instanceof NuclearBombBlock) {
-                if (!lv.isClientSide) {
-                  CompoundTag tag = ctx.getItemInHand().getOrCreateTag();
-                  tag.putInt("tx", pos.getX()); tag.putInt("ty", pos.getY()); tag.putInt("tz", pos.getZ());
-                  lv.playSound(null, pos, SoundEvents.EXPERIENCE_ORB_PICKUP, SoundSource.PLAYERS, 1.0f, 1.3f);
-                  if (ctx.getPlayer() != null) ctx.getPlayer().displayClientMessage(Component.literal("Bomba vinculada em " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + "! Afaste-se e clique direito no ar!").withStyle(ChatFormatting.GREEN), true);
+              @Override
+              public InteractionResult use(BlockState st, Level lv, BlockPos pos, Player p, InteractionHand h, BlockHitResult hit) {
+                ItemStack it = p.getItemInHand(h);
+                if (it.getItem() instanceof RemoteDetonatorItem) return InteractionResult.PASS;
+                if (it.is(Items.FLINT_AND_STEEL) || it.is(Items.FIRE_CHARGE) || it.is(Items.BLAZE_ROD)) {
+                  if (!lv.isClientSide) prime(lv, pos, p.isShiftKeyDown() ? 8 : 65);
+                  return InteractionResult.sidedSuccess(lv.isClientSide);
                 }
+                if (!lv.isClientSide) p.displayClientMessage(Component.literal("Use Isqueiro, Redstone ou Detonador Remoto para detonar!").withStyle(ChatFormatting.YELLOW), true);
                 return InteractionResult.sidedSuccess(lv.isClientSide);
               }
-              return InteractionResult.PASS;
-            }
-            @Override
-            public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
-              ItemStack st = p.getItemInHand(h);
-              CompoundTag tag = st.getTag();
-              if (tag == null || !tag.contains("tx")) {
-                if (!lv.isClientSide) p.displayClientMessage(Component.literal("Clique direito em uma bomba primeiro para vincular!").withStyle(ChatFormatting.YELLOW), true);
-                return InteractionResultHolder.fail(st);
+              @Override public void onPlace(BlockState st, Level lv, BlockPos pos, BlockState oldSt, boolean mv) { if (!lv.isClientSide && lv.hasNeighborSignal(pos)) prime(lv, pos, 45); }
+              @Override public void neighborChanged(BlockState st, Level lv, BlockPos pos, Block b, BlockPos from, boolean mv) { if (!lv.isClientSide && lv.hasNeighborSignal(pos)) prime(lv, pos, 45); }
+              @Override public void wasExploded(Level lv, BlockPos pos, Explosion ex) { if (!lv.isClientSide) prime(lv, pos, 12); }
+              @Override
+              public void appendHoverText(ItemStack st, @Nullable BlockGetter bg, List<Component> tip, TooltipFlag fl) {
+                tip.add(Component.literal("Raio de Destruicao: " + nukeType.radius + " blocos").withStyle(ChatFormatting.RED));
+                tip.add(Component.literal("Altura da Nuvem 3D: " + (int)nukeType.cloudH + " blocos").withStyle(ChatFormatting.GOLD));
+                if (nukeType.radR > 0) tip.add(Component.literal("Radiacao: " + nukeType.radR + " blocos (" + nukeType.radS + "s)").withStyle(ChatFormatting.GREEN));
+                tip.add(Component.literal("Acione com Isqueiro, Redstone ou Detonador Remoto").withStyle(ChatFormatting.GRAY));
               }
-              if (!lv.isClientSide) {
-                BlockPos pos = new BlockPos(tag.getInt("tx"), tag.getInt("ty"), tag.getInt("tz"));
-                BlockState bs = lv.getBlockState(pos);
-                if (bs.getBlock() instanceof NuclearBombBlock bomb) {
-                  bomb.primeBomb(lv, pos, 10);
-                  lv.playSound(null, p.blockPosition(), SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.2f, 0.7f);
-                  p.displayClientMessage(Component.literal("DETONACAO REMOTA ACIONADA!").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), true);
-                } else {
-                  p.displayClientMessage(Component.literal("Nenhuma bomba encontrada na coordenada salva!").withStyle(ChatFormatting.RED), true);
+            }
+
+            public static class MiniNukeGrenadeItem extends Item {
+              public MiniNukeGrenadeItem(Properties p) { super(p); }
+              @Override
+              public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
+                ItemStack st = p.getItemInHand(h);
+                lv.playSound(null, p.getX(), p.getY(), p.getZ(), SoundEvents.SNOWBALL_THROW, SoundSource.PLAYERS, 0.8f, 0.6f);
+                p.getCooldowns().addCooldown(this, 20);
+                if (!lv.isClientSide) {
+                  NukeEntities.MiniNukeGrenadeEntity e = new NukeEntities.MiniNukeGrenadeEntity(lv, p);
+                  e.setItem(st);
+                  e.shootFromRotation(p, p.getXRot(), p.getYRot(), 0.0f, 1.55f, 0.8f);
+                  lv.addFreshEntity(e);
                 }
+                if (!p.getAbilities().instabuild) st.shrink(1);
+                return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
               }
-              return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
             }
-            @Override
-            public void appendHoverText(ItemStack st, @Nullable Level lv, List<Component> tip, TooltipFlag fl) {
-              tip.add(Component.literal("Clique direito na bomba para vincular, depois clique no ar para detonar!").withStyle(ChatFormatting.AQUA));
-            }
-          }
-          """)
 
-          w(J + 'GeigerCounterItem.java', """
-          package com.realnukes;
-          import java.util.Locale;
-          import net.minecraft.ChatFormatting;
-          import net.minecraft.network.chat.Component;
-          import net.minecraft.server.level.ServerLevel;
-          import net.minecraft.sounds.SoundEvents;
-          import net.minecraft.sounds.SoundSource;
-          import net.minecraft.world.InteractionHand;
-          import net.minecraft.world.InteractionResultHolder;
-          import net.minecraft.world.entity.player.Player;
-          import net.minecraft.world.item.Item;
-          import net.minecraft.world.item.ItemStack;
-          import net.minecraft.world.level.Level;
-          public class GeigerCounterItem extends Item {
-            public GeigerCounterItem(Properties p) { super(p); }
-            @Override
-            public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
-              ItemStack st = p.getItemInHand(h);
-              if (lv instanceof ServerLevel sl) {
-                double rad = NuclearExplosionManager.getRadiationAt(sl, p.position());
-                ChatFormatting col = rad < 2.0 ? ChatFormatting.GREEN : (rad < 15.0 ? ChatFormatting.YELLOW : ChatFormatting.RED);
-                String txt = "GEIGER: " + String.format(Locale.ROOT, "%.1f", rad) + " RAD/s " + (rad < 2.0 ? "[SEGURO]" : (rad < 15.0 ? "[PERIGO]" : "[EXTREMO - USE HAZMAT]"));
-                p.displayClientMessage(Component.literal(txt).withStyle(col, ChatFormatting.BOLD), true);
-                lv.playSound(null, p.blockPosition(), SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.PLAYERS, 0.7f, (float)Math.min(2.0, 0.9 + rad * 0.03));
+            public static class OrbitalDesignatorItem extends Item {
+              public OrbitalDesignatorItem(Properties p) { super(p); }
+              @Override
+              public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
+                ItemStack st = p.getItemInHand(h);
+                Vec3 start = p.getEyePosition();
+                Vec3 end = start.add(p.getLookAngle().scale(160.0));
+                BlockHitResult hit = lv.clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.ANY, p));
+                if (hit.getType() == HitResult.Type.MISS) {
+                  if (!lv.isClientSide) p.displayClientMessage(Component.literal("Mire em um bloco a ate 160 blocos!").withStyle(ChatFormatting.RED), true);
+                  return InteractionResultHolder.fail(st);
+                }
+                p.getCooldowns().addCooldown(this, 60);
+                if (!lv.isClientSide) {
+                  Vec3 loc = hit.getLocation();
+                  NukeEntities.FallingMissileEntity m = new NukeEntities.FallingMissileEntity(FALLING_MISSILE.get(), lv);
+                  m.setPos(loc.x, Math.min(lv.getMaxBuildHeight() + 60.0, loc.y + 135.0), loc.z);
+                  lv.addFreshEntity(m);
+                  lv.playSound(null, p.blockPosition(), SoundEvents.BEACON_ACTIVATE, SoundSource.PLAYERS, 1.5f, 1.4f);
+                  p.displayClientMessage(Component.literal("ATAQUE ORBITAL CONFIRMADO! Missil termonuclear a caminho!").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), true);
+                }
+                return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
               }
-              return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
             }
-          }
-          """)
 
-          w(J + 'AntiRadPillItem.java', """
-          package com.realnukes;
-          import net.minecraft.ChatFormatting;
-          import net.minecraft.network.chat.Component;
-          import net.minecraft.world.effect.MobEffectInstance;
-          import net.minecraft.world.effect.MobEffects;
-          import net.minecraft.world.entity.LivingEntity;
-          import net.minecraft.world.entity.player.Player;
-          import net.minecraft.world.food.FoodProperties;
-          import net.minecraft.world.item.Item;
-          import net.minecraft.world.item.ItemStack;
-          import net.minecraft.world.level.Level;
-          public class AntiRadPillItem extends Item {
-            public AntiRadPillItem(Properties p) {
-              super(p.food(new FoodProperties.Builder().nutrition(1).saturationMod(0.2f).alwaysEat().fast().build()));
-            }
-            @Override
-            public ItemStack finishUsingItem(ItemStack st, Level lv, LivingEntity e) {
-              if (!lv.isClientSide) {
-                e.removeEffect(MobEffects.WITHER);
-                e.removeEffect(MobEffects.POISON);
-                e.removeEffect(MobEffects.CONFUSION);
-                e.removeEffect(MobEffects.WEAKNESS);
-                e.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 200, 1));
-                e.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 1800, 1));
-                if (e instanceof Player p) p.displayClientMessage(Component.literal("Rad-X tomado! Radiacao purificada!").withStyle(ChatFormatting.AQUA), true);
+            public static class RemoteDetonatorItem extends Item {
+              public RemoteDetonatorItem(Properties p) { super(p); }
+              @Override
+              public InteractionResult useOn(UseOnContext ctx) {
+                Level lv = ctx.getLevel();
+                BlockPos pos = ctx.getClickedPos();
+                if (lv.getBlockState(pos).getBlock() instanceof NuclearBombBlock) {
+                  if (!lv.isClientSide) {
+                    CompoundTag tag = ctx.getItemInHand().getOrCreateTag();
+                    tag.putInt("tx", pos.getX()); tag.putInt("ty", pos.getY()); tag.putInt("tz", pos.getZ());
+                    lv.playSound(null, pos, SoundEvents.EXPERIENCE_ORB_PICKUP, SoundSource.PLAYERS, 1.0f, 1.3f);
+                    if (ctx.getPlayer() != null) ctx.getPlayer().displayClientMessage(Component.literal("Bomba vinculada em " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + "! Afaste-se e clique direito no ar!").withStyle(ChatFormatting.GREEN), true);
+                  }
+                  return InteractionResult.sidedSuccess(lv.isClientSide);
+                }
+                return InteractionResult.PASS;
               }
-              return super.finishUsingItem(st, lv, e);
+              @Override
+              public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
+                ItemStack st = p.getItemInHand(h);
+                CompoundTag tag = st.getTag();
+                if (tag == null || !tag.contains("tx")) {
+                  if (!lv.isClientSide) p.displayClientMessage(Component.literal("Clique direito em uma bomba primeiro para vincular!").withStyle(ChatFormatting.YELLOW), true);
+                  return InteractionResultHolder.fail(st);
+                }
+                if (!lv.isClientSide) {
+                  BlockPos pos = new BlockPos(tag.getInt("tx"), tag.getInt("ty"), tag.getInt("tz"));
+                  BlockState bs = lv.getBlockState(pos);
+                  if (bs.getBlock() instanceof NuclearBombBlock bomb) {
+                    bomb.prime(lv, pos, 10);
+                    lv.playSound(null, p.blockPosition(), SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 1.2f, 0.7f);
+                    p.displayClientMessage(Component.literal("DETONACAO REMOTA ACIONADA!").withStyle(ChatFormatting.RED, ChatFormatting.BOLD), true);
+                  } else {
+                    p.displayClientMessage(Component.literal("Nenhuma bomba encontrada na coordenada salva!").withStyle(ChatFormatting.RED), true);
+                  }
+                }
+                return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
+              }
+            }
+
+            public static class GeigerCounterItem extends Item {
+              public GeigerCounterItem(Properties p) { super(p); }
+              @Override
+              public InteractionResultHolder<ItemStack> use(Level lv, Player p, InteractionHand h) {
+                ItemStack st = p.getItemInHand(h);
+                if (lv instanceof ServerLevel sl) {
+                  double rad = NuclearExplosionManager.getRad(sl, p.position());
+                  ChatFormatting col = rad < 2.0 ? ChatFormatting.GREEN : (rad < 15.0 ? ChatFormatting.YELLOW : ChatFormatting.RED);
+                  String txt = "GEIGER: " + String.format(Locale.ROOT, "%.1f", rad) + " RAD/s " + (rad < 2.0 ? "[SEGURO]" : (rad < 15.0 ? "[PERIGO]" : "[EXTREMO - USE HAZMAT]"));
+                  p.displayClientMessage(Component.literal(txt).withStyle(col, ChatFormatting.BOLD), true);
+                  lv.playSound(null, p.blockPosition(), SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.PLAYERS, 0.7f, (float)Math.min(2.0, 0.9 + rad * 0.03));
+                }
+                return InteractionResultHolder.sidedSuccess(st, lv.isClientSide);
+              }
+            }
+
+            public static class AntiRadPillItem extends Item {
+              public AntiRadPillItem(Properties p) {
+                super(p.food(new FoodProperties.Builder().nutrition(1).saturationMod(0.2f).alwaysEat().fast().build()));
+              }
+              @Override
+              public ItemStack finishUsingItem(ItemStack st, Level lv, LivingEntity e) {
+                if (!lv.isClientSide) {
+                  e.removeEffect(MobEffects.WITHER);
+                  e.removeEffect(MobEffects.POISON);
+                  e.removeEffect(MobEffects.CONFUSION);
+                  e.removeEffect(MobEffects.WEAKNESS);
+                  e.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 200, 1));
+                  e.addEffect(new MobEffectInstance(MobEffects.DAMAGE_RESISTANCE, 1800, 1));
+                  if (e instanceof Player p) p.displayClientMessage(Component.literal("Rad-X tomado! Radiacao purificada!").withStyle(ChatFormatting.AQUA), true);
+                }
+                return super.finishUsingItem(st, lv, e);
+              }
             }
           }
           """)
 
-          w(J + 'ModItems.java', """
+          # --- ClientCinemaState.java (seguro para servidor e cliente) ---
+          w(J + 'ClientCinemaState.java', """
           package com.realnukes;
-          import net.minecraft.world.item.ArmorItem;
-          import net.minecraft.world.item.BlockItem;
-          import net.minecraft.world.item.Item;
-          import net.minecraft.world.level.block.Block;
-          import net.minecraftforge.registries.DeferredRegister;
-          import net.minecraftforge.registries.ForgeRegistries;
-          import net.minecraftforge.registries.RegistryObject;
-          public class ModItems {
-            public static final DeferredRegister<Item> ITEMS = DeferredRegister.create(ForgeRegistries.ITEMS, RealNukesMod.MODID);
-            private static RegistryObject<Item> bi(String n, RegistryObject<Block> b) { return ITEMS.register(n, () -> new BlockItem(b.get(), new Item.Properties())); }
-            public static final RegistryObject<Item> TACTICAL_NUKE = bi("tactical_nuke", ModBlocks.TACTICAL_NUKE);
-            public static final RegistryObject<Item> LITTLE_BOY = bi("little_boy", ModBlocks.LITTLE_BOY);
-            public static final RegistryObject<Item> FAT_MAN = bi("fat_man", ModBlocks.FAT_MAN);
-            public static final RegistryObject<Item> HYDROGEN_BOMB = bi("hydrogen_bomb", ModBlocks.HYDROGEN_BOMB);
-            public static final RegistryObject<Item> TSAR_BOMBA = bi("tsar_bomba", ModBlocks.TSAR_BOMBA);
-            public static final RegistryObject<Item> NEUTRON_BOMB = bi("neutron_bomb", ModBlocks.NEUTRON_BOMB);
-            public static final RegistryObject<Item> COBALT_BOMB = bi("cobalt_bomb", ModBlocks.COBALT_BOMB);
-            public static final RegistryObject<Item> ANTIMATTER_BOMB = bi("antimatter_bomb", ModBlocks.ANTIMATTER_BOMB);
-            public static final RegistryObject<Item> SOLAR_BOMB = bi("solar_bomb", ModBlocks.SOLAR_BOMB);
-            public static final RegistryObject<Item> TRINITITE_BLOCK = bi("trinitite_block", ModBlocks.TRINITITE_BLOCK);
-            public static final RegistryObject<Item> RADIOACTIVE_ASH = bi("radioactive_ash", ModBlocks.RADIOACTIVE_ASH);
-            public static final RegistryObject<Item> URANIUM_ORE_BLOCK = bi("uranium_ore_block", ModBlocks.URANIUM_ORE_BLOCK);
-            public static final RegistryObject<Item> PLUTONIUM_CORE_BLOCK = bi("plutonium_core_block", ModBlocks.PLUTONIUM_CORE_BLOCK);
-            public static final RegistryObject<Item> LEAD_BUNKER_BLOCK = bi("lead_bunker_block", ModBlocks.LEAD_BUNKER_BLOCK);
-            public static final RegistryObject<Item> REINFORCED_BUNKER_GLASS = bi("reinforced_bunker_glass", ModBlocks.REINFORCED_BUNKER_GLASS);
-            public static final RegistryObject<Item> MINI_NUKE_GRENADE = ITEMS.register("mini_nuke_grenade", () -> new MiniNukeGrenadeItem(new Item.Properties().stacksTo(16)));
-            public static final RegistryObject<Item> ORBITAL_DESIGNATOR = ITEMS.register("orbital_designator", () -> new OrbitalDesignatorItem(new Item.Properties().stacksTo(1)));
-            public static final RegistryObject<Item> REMOTE_DETONATOR = ITEMS.register("remote_detonator", () -> new RemoteDetonatorItem(new Item.Properties().stacksTo(1)));
-            public static final RegistryObject<Item> GEIGER_COUNTER = ITEMS.register("geiger_counter", () -> new GeigerCounterItem(new Item.Properties().stacksTo(1)));
-            public static final RegistryObject<Item> ANTIRAD_PILL = ITEMS.register("antirad_pill", () -> new AntiRadPillItem(new Item.Properties().stacksTo(32)));
-            public static final RegistryObject<Item> HAZMAT_HELMET = ITEMS.register("hazmat_helmet", () -> new ArmorItem(HazmatArmorMaterial.INSTANCE, ArmorItem.Type.HELMET, new Item.Properties()));
-            public static final RegistryObject<Item> HAZMAT_CHESTPLATE = ITEMS.register("hazmat_chestplate", () -> new ArmorItem(HazmatArmorMaterial.INSTANCE, ArmorItem.Type.CHESTPLATE, new Item.Properties()));
-            public static final RegistryObject<Item> HAZMAT_LEGGINGS = ITEMS.register("hazmat_leggings", () -> new ArmorItem(HazmatArmorMaterial.INSTANCE, ArmorItem.Type.LEGGINGS, new Item.Properties()));
-            public static final RegistryObject<Item> HAZMAT_BOOTS = ITEMS.register("hazmat_boots", () -> new ArmorItem(HazmatArmorMaterial.INSTANCE, ArmorItem.Type.BOOTS, new Item.Properties()));
+          import java.util.ArrayList;
+          import java.util.List;
+          public class ClientCinemaState {
+            public static class Event {
+              public final double x, y, z;
+              public final RealNukesMod.NukeType type;
+              public Event(double x, double y, double z, RealNukesMod.NukeType type) {
+                this.x = x; this.y = y; this.z = z; this.type = type;
+              }
+            }
+            public static final List<Event> INCOMING = new ArrayList<>();
+            public static void push(double x, double y, double z, RealNukesMod.NukeType type) {
+              synchronized (INCOMING) {
+                INCOMING.add(new Event(x, y, z, type));
+              }
+            }
           }
           """)
 
-          w(J + 'ModCreativeTabs.java', """
+          # --- NukeEntities.java ---
+          w(J + 'NukeEntities.java', """
           package com.realnukes;
-          import net.minecraft.core.registries.Registries;
-          import net.minecraft.network.chat.Component;
-          import net.minecraft.world.item.CreativeModeTab;
-          import net.minecraft.world.item.ItemStack;
-          import net.minecraftforge.registries.DeferredRegister;
-          import net.minecraftforge.registries.RegistryObject;
-          public class ModCreativeTabs {
-            public static final DeferredRegister<CreativeModeTab> TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, RealNukesMod.MODID);
-            public static final RegistryObject<CreativeModeTab> REALNUKES_TAB = TABS.register("realnukes_tab", () -> CreativeModeTab.builder()
-              .title(Component.translatable("itemGroup.realnukes"))
-              .icon(() -> new ItemStack(ModItems.TSAR_BOMBA.get()))
-              .displayItems((p, out) -> {
-                out.accept(ModItems.TACTICAL_NUKE.get());
-                out.accept(ModItems.LITTLE_BOY.get());
-                out.accept(ModItems.FAT_MAN.get());
-                out.accept(ModItems.HYDROGEN_BOMB.get());
-                out.accept(ModItems.TSAR_BOMBA.get());
-                out.accept(ModItems.NEUTRON_BOMB.get());
-                out.accept(ModItems.COBALT_BOMB.get());
-                out.accept(ModItems.ANTIMATTER_BOMB.get());
-                out.accept(ModItems.SOLAR_BOMB.get());
-                out.accept(ModItems.MINI_NUKE_GRENADE.get());
-                out.accept(ModItems.ORBITAL_DESIGNATOR.get());
-                out.accept(ModItems.REMOTE_DETONATOR.get());
-                out.accept(ModItems.GEIGER_COUNTER.get());
-                out.accept(ModItems.ANTIRAD_PILL.get());
-                out.accept(ModItems.HAZMAT_HELMET.get());
-                out.accept(ModItems.HAZMAT_CHESTPLATE.get());
-                out.accept(ModItems.HAZMAT_LEGGINGS.get());
-                out.accept(ModItems.HAZMAT_BOOTS.get());
-                out.accept(ModItems.LEAD_BUNKER_BLOCK.get());
-                out.accept(ModItems.REINFORCED_BUNKER_GLASS.get());
-                out.accept(ModItems.TRINITITE_BLOCK.get());
-                out.accept(ModItems.RADIOACTIVE_ASH.get());
-                out.accept(ModItems.URANIUM_ORE_BLOCK.get());
-                out.accept(ModItems.PLUTONIUM_CORE_BLOCK.get());
-              }).build());
-          }
-          """)
-
-          w(J + 'ModEntities.java', """
-          package com.realnukes;
-          import net.minecraft.world.entity.EntityType;
-          import net.minecraft.world.entity.MobCategory;
-          import net.minecraftforge.registries.DeferredRegister;
-          import net.minecraftforge.registries.ForgeRegistries;
-          import net.minecraftforge.registries.RegistryObject;
-          public class ModEntities {
-            public static final DeferredRegister<EntityType<?>> ENTITIES = DeferredRegister.create(ForgeRegistries.ENTITY_TYPES, RealNukesMod.MODID);
-            public static final RegistryObject<EntityType<PrimedNukeEntity>> PRIMED_NUKE = ENTITIES.register("primed_nuke",
-              () -> EntityType.Builder.of(PrimedNukeEntity::new, MobCategory.MISC).sized(0.98f, 0.98f).clientTrackingRange(16).updateInterval(2).build("primed_nuke"));
-            public static final RegistryObject<EntityType<MiniNukeGrenadeEntity>> MINI_NUKE_GRENADE = ENTITIES.register("mini_nuke_grenade",
-              () -> EntityType.Builder.<MiniNukeGrenadeEntity>of(MiniNukeGrenadeEntity::new, MobCategory.MISC).sized(0.25f, 0.25f).clientTrackingRange(8).updateInterval(4).build("mini_nuke_grenade"));
-            public static final RegistryObject<EntityType<FallingMissileEntity>> FALLING_MISSILE = ENTITIES.register("falling_missile",
-              () -> EntityType.Builder.of(FallingMissileEntity::new, MobCategory.MISC).sized(0.9f, 2.8f).clientTrackingRange(24).updateInterval(1).build("falling_missile"));
-            public static final RegistryObject<EntityType<MushroomCloudEntity>> MUSHROOM_CLOUD = ENTITIES.register("mushroom_cloud",
-              () -> EntityType.Builder.of(MushroomCloudEntity::new, MobCategory.MISC).sized(4.0f, 4.0f).fireImmune().clientTrackingRange(32).updateInterval(2).build("mushroom_cloud"));
-          }
-          """)
-
-          w(J + 'PrimedNukeEntity.java', """
-          package com.realnukes;
+          import net.minecraft.core.BlockPos;
           import net.minecraft.core.particles.ParticleTypes;
           import net.minecraft.nbt.CompoundTag;
           import net.minecraft.network.protocol.Packet;
           import net.minecraft.network.protocol.game.ClientGamePacketListener;
+          import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
           import net.minecraft.network.syncher.EntityDataAccessor;
           import net.minecraft.network.syncher.EntityDataSerializers;
           import net.minecraft.network.syncher.SynchedEntityData;
@@ -998,246 +730,173 @@ jobs:
           import net.minecraft.sounds.SoundSource;
           import net.minecraft.world.entity.Entity;
           import net.minecraft.world.entity.EntityType;
-          import net.minecraft.world.entity.MoverType;
-          import net.minecraft.world.level.Level;
-          import net.minecraftforge.network.NetworkHooks;
-          public class PrimedNukeEntity extends Entity {
-            private static final EntityDataAccessor<Integer> DATA_FUSE = SynchedEntityData.defineId(PrimedNukeEntity.class, EntityDataSerializers.INT);
-            private static final EntityDataAccessor<Integer> DATA_TYPE = SynchedEntityData.defineId(PrimedNukeEntity.class, EntityDataSerializers.INT);
-            public PrimedNukeEntity(EntityType<? extends PrimedNukeEntity> type, Level level) {
-              super(type, level);
-              this.blocksBuilding = true;
-            }
-            @Override
-            protected void defineSynchedData() {
-              this.entityData.define(DATA_FUSE, 60);
-              this.entityData.define(DATA_TYPE, 0);
-            }
-            public void setFuse(int fuse) { this.entityData.set(DATA_FUSE, fuse); }
-            public int getFuse() { return this.entityData.get(DATA_FUSE); }
-            public void setNukeType(NukeType type) { this.entityData.set(DATA_TYPE, type.id); }
-            public NukeType getNukeType() { return NukeType.byId(this.entityData.get(DATA_TYPE)); }
-            @Override
-            public void tick() {
-              if (!this.isNoGravity()) {
-                this.setDeltaMovement(this.getDeltaMovement().add(0.0, -0.04, 0.0));
-              }
-              this.move(MoverType.SELF, this.getDeltaMovement());
-              this.setDeltaMovement(this.getDeltaMovement().scale(0.98));
-              if (this.onGround()) {
-                this.setDeltaMovement(this.getDeltaMovement().multiply(0.7, -0.5, 0.7));
-              }
-              int f = this.getFuse() - 1;
-              this.setFuse(f);
-              if (f <= 0) {
-                if (this.level() instanceof ServerLevel sl) {
-                  NuclearExplosionManager.detonate(sl, this.position(), this.getNukeType());
-                }
-                this.discard();
-              } else {
-                if (this.level().isClientSide) {
-                  this.level().addParticle(ParticleTypes.SMOKE, this.getX(), this.getY() + 1.05, this.getZ(), 0.0, 0.06, 0.0);
-                  if (f < 25) {
-                    this.level().addParticle(ParticleTypes.FLAME, this.getX(), this.getY() + 1.05, this.getZ(), 0.0, 0.04, 0.0);
-                  }
-                } else if (f % 10 == 0 || (f < 20 && f % 4 == 0)) {
-                  this.level().playSound(null, this.blockPosition(), SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.BLOCKS, 1.4f, f < 20 ? 1.8f : 1.1f);
-                }
-              }
-            }
-            @Override
-            protected void readAdditionalSaveData(CompoundTag tag) {
-              setFuse(tag.getInt("Fuse"));
-              setNukeType(NukeType.byId(tag.getInt("NukeType")));
-            }
-            @Override
-            protected void addAdditionalSaveData(CompoundTag tag) {
-              tag.putInt("Fuse", getFuse());
-              tag.putInt("NukeType", getNukeType().id);
-            }
-            @Override
-            public Packet<ClientGamePacketListener> getAddEntityPacket() {
-              return NetworkHooks.getEntitySpawningPacket(this);
-            }
-          }
-          """)
-
-          w(J + 'MiniNukeGrenadeEntity.java', """
-          package com.realnukes;
-          import net.minecraft.network.protocol.Packet;
-          import net.minecraft.network.protocol.game.ClientGamePacketListener;
-          import net.minecraft.server.level.ServerLevel;
-          import net.minecraft.world.entity.EntityType;
           import net.minecraft.world.entity.LivingEntity;
+          import net.minecraft.world.entity.MoverType;
           import net.minecraft.world.entity.projectile.ThrowableItemProjectile;
           import net.minecraft.world.item.Item;
           import net.minecraft.world.level.Level;
-          import net.minecraft.world.phys.HitResult;
-          import net.minecraftforge.network.NetworkHooks;
-          public class MiniNukeGrenadeEntity extends ThrowableItemProjectile {
-            public MiniNukeGrenadeEntity(EntityType<? extends MiniNukeGrenadeEntity> type, Level level) {
-              super(type, level);
-            }
-            public MiniNukeGrenadeEntity(Level level, LivingEntity shooter) {
-              super(ModEntities.MINI_NUKE_GRENADE.get(), shooter, level);
-            }
-            @Override
-            protected Item getDefaultItem() {
-              return ModItems.MINI_NUKE_GRENADE.get();
-            }
-            @Override
-            protected void onHit(HitResult result) {
-              super.onHit(result);
-              if (this.level() instanceof ServerLevel sl) {
-                NuclearExplosionManager.detonate(sl, result.getLocation(), NukeType.MINI_GRENADE);
-                this.discard();
-              }
-            }
-            @Override
-            public Packet<ClientGamePacketListener> getAddEntityPacket() {
-              return NetworkHooks.getEntitySpawningPacket(this);
-            }
-          }
-          """)
-
-          w(J + 'FallingMissileEntity.java', """
-          package com.realnukes;
-          import net.minecraft.core.particles.ParticleTypes;
-          import net.minecraft.nbt.CompoundTag;
-          import net.minecraft.network.protocol.Packet;
-          import net.minecraft.network.protocol.game.ClientGamePacketListener;
-          import net.minecraft.server.level.ServerLevel;
-          import net.minecraft.world.entity.Entity;
-          import net.minecraft.world.entity.EntityType;
-          import net.minecraft.world.entity.MoverType;
-          import net.minecraft.world.level.Level;
-          import net.minecraftforge.network.NetworkHooks;
-          public class FallingMissileEntity extends Entity {
-            public FallingMissileEntity(EntityType<? extends FallingMissileEntity> type, Level level) {
-              super(type, level);
-              this.setDeltaMovement(0.0, -2.2, 0.0);
-            }
-            @Override protected void defineSynchedData() {}
-            @Override
-            public void tick() {
-              double vy = Math.max(-4.5, this.getDeltaMovement().y - 0.16);
-              this.setDeltaMovement(0.0, vy, 0.0);
-              this.move(MoverType.SELF, this.getDeltaMovement());
-              if (this.level().isClientSide) {
-                for (int i = 0; i < 4; i++) {
-                  this.level().addParticle(ParticleTypes.CAMPFIRE_COSY_SMOKE, this.getX() + (random.nextDouble() - 0.5) * 0.4, this.getY() + 2.8 + i * 0.6, this.getZ() + (random.nextDouble() - 0.5) * 0.4, 0.0, 0.15, 0.0);
-                  this.level().addParticle(ParticleTypes.FLAME, this.getX(), this.getY() + 2.5, this.getZ(), (random.nextDouble() - 0.5) * 0.15, 0.25, (random.nextDouble() - 0.5) * 0.15);
-                }
-              } else if (this.level() instanceof ServerLevel sl) {
-                if (this.onGround() || this.verticalCollision || this.getY() <= sl.getMinBuildHeight() + 1 || !sl.getBlockState(this.blockPosition()).isAir()) {
-                  NuclearExplosionManager.detonate(sl, this.position(), NukeType.HYDROGEN);
-                  this.discard();
-                }
-              }
-            }
-            @Override public boolean shouldRenderAtSqrDistance(double dist) { return dist < 512.0 * 512.0; }
-            @Override protected void readAdditionalSaveData(CompoundTag tag) {}
-            @Override protected void addAdditionalSaveData(CompoundTag tag) {}
-            @Override
-            public Packet<ClientGamePacketListener> getAddEntityPacket() {
-              return NetworkHooks.getEntitySpawningPacket(this);
-            }
-          }
-          """)
-
-          w(J + 'MushroomCloudEntity.java', """
-          package com.realnukes;
-          import net.minecraft.nbt.CompoundTag;
-          import net.minecraft.network.protocol.Packet;
-          import net.minecraft.network.protocol.game.ClientGamePacketListener;
-          import net.minecraft.network.syncher.EntityDataAccessor;
-          import net.minecraft.network.syncher.EntityDataSerializers;
-          import net.minecraft.network.syncher.SynchedEntityData;
-          import net.minecraft.world.entity.Entity;
-          import net.minecraft.world.entity.EntityType;
-          import net.minecraft.world.level.Level;
           import net.minecraft.world.phys.AABB;
-          import net.minecraftforge.api.distmarker.Dist;
-          import net.minecraftforge.fml.DistExecutor;
-          import net.minecraftforge.network.NetworkHooks;
-          public class MushroomCloudEntity extends Entity {
-            private static final EntityDataAccessor<Integer> DATA_TYPE = SynchedEntityData.defineId(MushroomCloudEntity.class, EntityDataSerializers.INT);
-            private static final EntityDataAccessor<Integer> DATA_AGE = SynchedEntityData.defineId(MushroomCloudEntity.class, EntityDataSerializers.INT);
-            public MushroomCloudEntity(EntityType<? extends MushroomCloudEntity> type, Level level) {
-              super(type, level);
-              this.noPhysics = true;
-            }
-            @Override
-            protected void defineSynchedData() {
-              this.entityData.define(DATA_TYPE, 0);
-              this.entityData.define(DATA_AGE, 0);
-            }
-            public void setNukeType(NukeType type) { this.entityData.set(DATA_TYPE, type.id); }
-            public NukeType getNukeType() { return NukeType.byId(this.entityData.get(DATA_TYPE)); }
-            public int getCloudAge() { return this.entityData.get(DATA_AGE); }
-            public void setCloudAge(int age) { this.entityData.set(DATA_AGE, age); }
-            @Override
-            public void tick() {
-              int age = getCloudAge() + 1;
-              if (!this.level().isClientSide) {
-                setCloudAge(age);
-                if (age >= getNukeType().duration) {
-                  this.discard();
-                }
-              } else {
-                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ClientEffects.onCloudTick(this));
+          import net.minecraft.world.phys.HitResult;
+
+          public class NukeEntities {
+            public static class NuclearCloudEntity extends Entity {
+              private static final EntityDataAccessor<Integer> D_TYPE = SynchedEntityData.defineId(NuclearCloudEntity.class, EntityDataSerializers.INT);
+              private static final EntityDataAccessor<Integer> D_AGE = SynchedEntityData.defineId(NuclearCloudEntity.class, EntityDataSerializers.INT);
+              private boolean fxSent = false;
+
+              public NuclearCloudEntity(EntityType<? extends NuclearCloudEntity> t, Level l) {
+                super(t, l);
+                this.noCulling = true;
+                this.setInvulnerable(true);
               }
+              @Override protected void defineSynchedData() {
+                entityData.define(D_TYPE, 0);
+                entityData.define(D_AGE, 0);
+              }
+              public void setNukeType(RealNukesMod.NukeType t) { entityData.set(D_TYPE, t.id); }
+              public RealNukesMod.NukeType getNukeType() { return RealNukesMod.NukeType.byId(entityData.get(D_TYPE)); }
+              public int getCloudAge() { return entityData.get(D_AGE); }
+              @Override
+              public void tick() {
+                super.tick();
+                int a = getCloudAge() + 1;
+                if (!level().isClientSide) {
+                  entityData.set(D_AGE, a);
+                  if (a > getNukeType().dur) discard();
+                } else {
+                  if (!fxSent) {
+                    fxSent = true;
+                    ClientCinemaState.push(getX(), getY(), getZ(), getNukeType());
+                  }
+                  if (a < getNukeType().dur - 40 && a % 2 == 0) {
+                    double r = getNukeType().cloudR * 0.65;
+                    double ang = random.nextDouble() * 6.283;
+                    level().addParticle(ParticleTypes.ASH, getX() + Math.cos(ang) * r * random.nextDouble(), getY() + random.nextDouble() * 30, getZ() + Math.sin(ang) * r * random.nextDouble(), 0, -0.08, 0);
+                    if (a < 200) {
+                      level().addParticle(ParticleTypes.FLAME, getX() + (random.nextDouble() - 0.5) * 14, getY() + random.nextDouble() * 22, getZ() + (random.nextDouble() - 0.5) * 14, 0, 0.45, 0);
+                    }
+                  }
+                }
+              }
+              @Override public boolean shouldRenderAtSqrDistance(double d) { return d < 1440000.0; }
+              @Override public AABB getBoundingBoxForCulling() { return new AABB(getX() - 320, getY() - 64, getZ() - 320, getX() + 320, getY() + 360, getZ() + 320); }
+              @Override public boolean isAttackable() { return false; }
+              @Override protected void readAdditionalSaveData(CompoundTag n) { entityData.set(D_TYPE, n.getInt("t")); entityData.set(D_AGE, n.getInt("a")); }
+              @Override protected void addAdditionalSaveData(CompoundTag n) { n.putInt("t", entityData.get(D_TYPE)); n.putInt("a", entityData.get(D_AGE)); }
+              @Override public Packet<ClientGamePacketListener> getAddEntityPacket() { return new ClientboundAddEntityPacket(this); }
             }
-            @Override
-            public AABB getBoundingBoxForCulling() {
-              NukeType t = getNukeType();
-              double r = t.cloudR * 3.2;
-              double h = t.cloudH * 1.9;
-              return new AABB(getX() - r, getY() - 24.0, getZ() - r, getX() + r, getY() + h, getZ() + r);
+
+            public static class PrimedNukeEntity extends Entity {
+              private static final EntityDataAccessor<Integer> D_TYPE = SynchedEntityData.defineId(PrimedNukeEntity.class, EntityDataSerializers.INT);
+              private static final EntityDataAccessor<Integer> D_FUSE = SynchedEntityData.defineId(PrimedNukeEntity.class, EntityDataSerializers.INT);
+
+              public PrimedNukeEntity(EntityType<? extends PrimedNukeEntity> t, Level l) {
+                super(t, l);
+                this.blocksBuilding = true;
+              }
+              @Override protected void defineSynchedData() {
+                entityData.define(D_TYPE, 0);
+                entityData.define(D_FUSE, 60);
+              }
+              public void setNukeType(RealNukesMod.NukeType t) { entityData.set(D_TYPE, t.id); }
+              public RealNukesMod.NukeType getNukeType() { return RealNukesMod.NukeType.byId(entityData.get(D_TYPE)); }
+              public void setFuse(int f) { entityData.set(D_FUSE, f); }
+              public int getFuse() { return entityData.get(D_FUSE); }
+              @Override
+              public void tick() {
+                super.tick();
+                if (!isNoGravity()) setDeltaMovement(getDeltaMovement().add(0.0, -0.04, 0.0));
+                move(MoverType.SELF, getDeltaMovement());
+                setDeltaMovement(getDeltaMovement().scale(0.98));
+                if (onGround()) setDeltaMovement(getDeltaMovement().multiply(0.7, -0.5, 0.7));
+                int f = getFuse() - 1;
+                setFuse(f);
+                if (f <= 0) {
+                  if (level() instanceof ServerLevel sl) {
+                    NuclearExplosionManager.detonate(sl, blockPosition(), getNukeType());
+                  }
+                  discard();
+                } else if (level().isClientSide) {
+                  level().addParticle(ParticleTypes.SMOKE, getX(), getY() + 1.05, getZ(), 0, 0.06, 0);
+                  if (f < 25) level().addParticle(ParticleTypes.FLAME, getX(), getY() + 1.05, getZ(), 0, 0.04, 0);
+                } else if (f % 10 == 0 || (f < 20 && f % 4 == 0)) {
+                  level().playSound(null, blockPosition(), SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.BLOCKS, 1.3f, f < 20 ? 1.8f : 1.1f);
+                }
+              }
+              @Override protected void readAdditionalSaveData(CompoundTag n) { setNukeType(RealNukesMod.NukeType.byId(n.getInt("t"))); setFuse(n.getInt("f")); }
+              @Override protected void addAdditionalSaveData(CompoundTag n) { n.putInt("t", getNukeType().id); n.putInt("f", getFuse()); }
+              @Override public Packet<ClientGamePacketListener> getAddEntityPacket() { return new ClientboundAddEntityPacket(this); }
             }
-            @Override public boolean shouldRenderAtSqrDistance(double dist) { return dist < 1024.0 * 1024.0; }
-            @Override public boolean isPickable() { return false; }
-            @Override public boolean fireImmune() { return true; }
-            @Override
-            protected void readAdditionalSaveData(CompoundTag tag) {
-              setNukeType(NukeType.byId(tag.getInt("NukeType")));
-              setCloudAge(tag.getInt("CloudAge"));
+
+            public static class MiniNukeGrenadeEntity extends ThrowableItemProjectile {
+              public MiniNukeGrenadeEntity(EntityType<? extends MiniNukeGrenadeEntity> t, Level l) { super(t, l); }
+              public MiniNukeGrenadeEntity(Level l, LivingEntity shooter) { super(RealNukesMod.MINI_GRENADE_ENT.get(), shooter, l); }
+              @Override protected Item getDefaultItem() { return RealNukesMod.MINI_NUKE_GRENADE.get(); }
+              @Override
+              protected void onHit(HitResult res) {
+                super.onHit(res);
+                if (level() instanceof ServerLevel sl) {
+                  NuclearExplosionManager.detonate(sl, BlockPos.containing(res.getLocation()), RealNukesMod.NukeType.MINI_GRENADE);
+                  discard();
+                }
+              }
+              @Override public Packet<ClientGamePacketListener> getAddEntityPacket() { return new ClientboundAddEntityPacket(this); }
             }
-            @Override
-            protected void addAdditionalSaveData(CompoundTag tag) {
-              tag.putInt("NukeType", getNukeType().id);
-              tag.putInt("CloudAge", getCloudAge());
-            }
-            @Override
-            public Packet<ClientGamePacketListener> getAddEntityPacket() {
-              return NetworkHooks.getEntitySpawningPacket(this);
+
+            public static class FallingMissileEntity extends Entity {
+              public FallingMissileEntity(EntityType<? extends FallingMissileEntity> t, Level l) {
+                super(t, l);
+                this.noCulling = true;
+              }
+              @Override protected void defineSynchedData() {}
+              @Override
+              public void tick() {
+                super.tick();
+                if (level().isClientSide) {
+                  for (int i = 0; i < 5; i++) {
+                    level().addParticle(ParticleTypes.FLAME, getX() + (random.nextDouble() - 0.5) * 0.5, getY() + 4.5, getZ() + (random.nextDouble() - 0.5) * 0.5, 0, 0.3, 0);
+                    level().addParticle(ParticleTypes.CAMPFIRE_COSY_SMOKE, getX(), getY() + 5.2, getZ(), (random.nextDouble() - 0.5) * 0.15, 0.2, (random.nextDouble() - 0.5) * 0.15);
+                  }
+                } else {
+                  for (int dy = 0; dy <= 4; dy++) {
+                    BlockPos p = BlockPos.containing(getX(), getY() - dy, getZ());
+                    if (!level().getBlockState(p).isAir() || p.getY() <= level().getMinBuildHeight() + 1) {
+                      NuclearExplosionManager.detonate((ServerLevel)level(), p, RealNukesMod.NukeType.HYDROGEN);
+                      discard();
+                      return;
+                    }
+                  }
+                  setPos(getX(), getY() - 3.8, getZ());
+                  if (tickCount > 120) discard();
+                }
+              }
+              @Override public boolean shouldRenderAtSqrDistance(double d) { return d < 1024.0 * 1024.0; }
+              @Override protected void readAdditionalSaveData(CompoundTag n) {}
+              @Override protected void addAdditionalSaveData(CompoundTag n) {}
+              @Override public Packet<ClientGamePacketListener> getAddEntityPacket() { return new ClientboundAddEntityPacket(this); }
             }
           }
           """)
 
+          # --- NuclearExplosionManager.java ---
           w(J + 'NuclearExplosionManager.java', """
           package com.realnukes;
-          import java.util.ArrayList;
-          import java.util.Arrays;
-          import java.util.HashMap;
-          import java.util.Iterator;
-          import java.util.List;
-          import java.util.Map;
+          import java.util.*;
+          import net.minecraft.ChatFormatting;
           import net.minecraft.core.BlockPos;
+          import net.minecraft.core.particles.ParticleTypes;
+          import net.minecraft.network.chat.Component;
           import net.minecraft.resources.ResourceKey;
-          import net.minecraft.server.level.ServerLevel;
-          import net.minecraft.sounds.SoundEvents;
-          import net.minecraft.sounds.SoundSource;
-          import net.minecraft.world.effect.MobEffectInstance;
-          import net.minecraft.world.effect.MobEffects;
-          import net.minecraft.world.entity.LivingEntity;
-          import net.minecraft.world.entity.player.Player;
+          import net.minecraft.server.level.*;
+          import net.minecraft.sounds.*;
+          import net.minecraft.tags.BlockTags;
+          import net.minecraft.world.effect.*;
+          import net.minecraft.world.entity.*;
           import net.minecraft.world.level.Level;
-          import net.minecraft.world.level.block.Block;
-          import net.minecraft.world.level.block.Blocks;
+          import net.minecraft.world.level.block.*;
           import net.minecraft.world.level.block.state.BlockState;
-          import net.minecraft.world.phys.AABB;
-          import net.minecraft.world.phys.Vec3;
+          import net.minecraft.world.level.levelgen.Heightmap;
+          import net.minecraft.world.phys.*;
           import net.minecraftforge.event.TickEvent;
           import net.minecraftforge.event.level.LevelEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -1245,757 +904,644 @@ jobs:
 
           @Mod.EventBusSubscriber(modid = RealNukesMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
           public class NuclearExplosionManager {
-            private static final Map<ResourceKey<Level>, List<ActiveBlast>> BLASTS = new HashMap<>();
-            private static final Map<ResourceKey<Level>, List<RadiationZone>> RAD_ZONES = new HashMap<>();
+            static class Blast {
+              final BlockPos c;
+              final RealNukesMod.NukeType t;
+              final int[] cols;
+              int idx = 0;
+              double shock = 0;
+              int age = 0;
 
-            public static void detonate(ServerLevel level, Vec3 pos, NukeType type) {
-              MushroomCloudEntity cloud = new MushroomCloudEntity(ModEntities.MUSHROOM_CLOUD.get(), level);
-              cloud.setPos(pos.x, pos.y, pos.z);
-              cloud.setNukeType(type);
-              level.addFreshEntity(cloud);
-
-              level.playSound(null, pos.x, pos.y, pos.z, SoundEvents.GENERIC_EXPLODE, SoundSource.BLOCKS, 8.0f, 0.45f);
-
-              BLASTS.computeIfAbsent(level.dimension(), k -> new ArrayList<>()).add(new ActiveBlast(pos, type));
-
-              if (type.radRadius > 0 && type.radSec > 0) {
-                double maxRad = type == NukeType.COBALT ? 52.0 : (type.neutron ? 60.0 : 28.0);
-                RAD_ZONES.computeIfAbsent(level.dimension(), k -> new ArrayList<>())
-                  .add(new RadiationZone(pos, type.radRadius, type.radSec * 20, maxRad));
+              Blast(BlockPos c, RealNukesMod.NukeType t) {
+                this.c = c;
+                this.t = t;
+                int ro = (int)(t.radius * 1.32);
+                int[] cnt = new int[ro + 2];
+                for (int dx = -ro; dx <= ro; dx++)
+                  for (int dz = -ro; dz <= ro; dz++) {
+                    int r = (int)Math.sqrt(dx * dx + dz * dz);
+                    if (r <= ro) cnt[r]++;
+                  }
+                int tot = 0;
+                int[] off = new int[ro + 2];
+                for (int i = 0; i <= ro; i++) {
+                  off[i] = tot;
+                  tot += cnt[i];
+                }
+                cols = new int[tot];
+                for (int dx = -ro; dx <= ro; dx++)
+                  for (int dz = -ro; dz <= ro; dz++) {
+                    int r = (int)Math.sqrt(dx * dx + dz * dz);
+                    if (r <= ro) cols[off[r]++] = ((dx + 512) << 10) | (dz + 512);
+                  }
               }
             }
 
-            public static double getRadiationAt(ServerLevel level, Vec3 pos) {
-              double total = 0.0;
-              List<RadiationZone> zones = RAD_ZONES.get(level.dimension());
-              if (zones != null) {
-                for (RadiationZone z : zones) {
-                  total += z.getRadAt(pos);
+            static class RadZone {
+              final BlockPos c;
+              final int r;
+              int ticks;
+              RadZone(BlockPos c, int r, int t) { this.c = c; this.r = r; this.ticks = t; }
+            }
+
+            private static final Map<ResourceKey<Level>, List<Blast>> BLASTS = new HashMap<>();
+            private static final Map<ResourceKey<Level>, List<RadZone>> RADS = new HashMap<>();
+
+            public static void detonate(ServerLevel lv, BlockPos c, RealNukesMod.NukeType t) {
+              NukeEntities.NuclearCloudEntity cl = new NukeEntities.NuclearCloudEntity(RealNukesMod.NUCLEAR_CLOUD.get(), lv);
+              cl.setPos(c.getX() + 0.5, c.getY() + 0.5, c.getZ() + 0.5);
+              cl.setNukeType(t);
+              lv.addFreshEntity(cl);
+              BLASTS.computeIfAbsent(lv.dimension(), k -> new ArrayList<>()).add(new Blast(c, t));
+              if (t.radR > 0) RADS.computeIfAbsent(lv.dimension(), k -> new ArrayList<>()).add(new RadZone(c, t.radR, t.radS * 20));
+            }
+
+            public static double getRad(ServerLevel lv, Vec3 p) {
+              double tot = 0;
+              List<RadZone> zs = RADS.get(lv.dimension());
+              if (zs != null) {
+                for (RadZone z : zs) {
+                  double d = p.distanceTo(Vec3.atCenterOf(z.c));
+                  if (d < z.r) tot += Math.pow(1.0 - d / z.r, 1.6) * 60.0;
                 }
               }
-              BlockPos center = BlockPos.containing(pos);
-              BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-              for (int dx = -3; dx <= 3; dx++) {
-                for (int dy = -2; dy <= 2; dy++) {
-                  for (int dz = -3; dz <= 3; dz++) {
-                    mp.set(center.getX() + dx, center.getY() + dy, center.getZ() + dz);
-                    Block b = level.getBlockState(mp).getBlock();
-                    if (b == ModBlocks.PLUTONIUM_CORE_BLOCK.get()) total += 6.5;
-                    else if (b == ModBlocks.URANIUM_ORE_BLOCK.get()) total += 3.0;
-                    else if (b == ModBlocks.RADIOACTIVE_ASH.get()) total += 0.6;
-                    else if (b == ModBlocks.TRINITITE_BLOCK.get()) total += 0.35;
-                  }
-                }
-              }
-              return total;
+              return tot;
             }
 
             @SubscribeEvent
-            public static void onLevelTick(TickEvent.LevelTickEvent event) {
-              if (event.phase != TickEvent.Phase.END || !(event.level instanceof ServerLevel sl)) return;
-              ResourceKey<Level> dim = sl.dimension();
-
-              List<ActiveBlast> blasts = BLASTS.get(dim);
-              if (blasts != null && !blasts.isEmpty()) {
-                Iterator<ActiveBlast> it = blasts.iterator();
-                while (it.hasNext()) {
-                  if (it.next().tick(sl)) it.remove();
-                }
-              }
-
-              List<RadiationZone> zones = RAD_ZONES.get(dim);
-              if (zones != null && !zones.isEmpty()) {
-                Iterator<RadiationZone> it = zones.iterator();
-                while (it.hasNext()) {
-                  RadiationZone z = it.next();
-                  z.ticksLeft--;
-                  if (z.ticksLeft <= 0) it.remove();
-                }
-                if (sl.getGameTime() % 20 == 0) {
-                  applyRadiationEffects(sl, zones);
-                }
-              }
-            }
-
-            private static void applyRadiationEffects(ServerLevel sl, List<RadiationZone> zones) {
-              for (RadiationZone z : zones) {
-                AABB box = new AABB(
-                  z.center.x - z.radius, z.center.y - z.radius, z.center.z - z.radius,
-                  z.center.x + z.radius, z.center.y + z.radius, z.center.z + z.radius
-                );
-                for (LivingEntity e : sl.getEntitiesOfClass(LivingEntity.class, box)) {
-                  double rad = z.getRadAt(e.position());
-                  if (rad < 1.5) continue;
-                  if (e instanceof Player p) {
-                    if (p.getMainHandItem().is(ModItems.GEIGER_COUNTER.get()) || p.getOffhandItem().is(ModItems.GEIGER_COUNTER.get())) {
-                      sl.playSound(null, p.blockPosition(), SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.PLAYERS, 0.5f, (float)Math.min(2.0, 1.0 + rad * 0.025));
-                    }
-                    if (p.isCreative() || p.isSpectator()) continue;
-                  }
-                  if (HazmatArmorMaterial.hasFullHazmat(e)) continue;
-                  e.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 60, 0, false, false));
-                  if (rad >= 6.0) {
-                    e.addEffect(new MobEffectInstance(MobEffects.POISON, 60, 0, false, false));
-                    e.addEffect(new MobEffectInstance(MobEffects.CONFUSION, 80, 0, false, false));
-                  }
-                  if (rad >= 16.0) {
-                    e.addEffect(new MobEffectInstance(MobEffects.WITHER, 60, 1, false, false));
-                    e.hurt(sl.damageSources().magic(), (float)Math.min(6.0, rad * 0.14));
-                  }
-                }
+            public static void onUnload(LevelEvent.Unload ev) {
+              if (ev.getLevel() instanceof ServerLevel lv) {
+                BLASTS.remove(lv.dimension());
+                RADS.remove(lv.dimension());
               }
             }
 
             @SubscribeEvent
-            public static void onLevelUnload(LevelEvent.Unload event) {
-              if (event.getLevel() instanceof ServerLevel sl) {
-                BLASTS.remove(sl.dimension());
-                RAD_ZONES.remove(sl.dimension());
-              }
-            }
-
-            private static class RadiationZone {
-              final Vec3 center;
-              final double radius;
-              final int maxTicks;
-              final double maxRad;
-              int ticksLeft;
-              RadiationZone(Vec3 c, double r, int ticks, double maxRad) {
-                this.center = c; this.radius = r; this.maxTicks = ticks; this.ticksLeft = ticks; this.maxRad = maxRad;
-              }
-              double getRadAt(Vec3 pos) {
-                double d = pos.distanceTo(center);
-                if (d >= radius) return 0.0;
-                double falloff = 1.0 - (d / radius);
-                double decay = Math.max(0.25, (double)ticksLeft / (double)maxTicks);
-                return maxRad * falloff * decay;
-              }
-            }
-
-            private static class ActiveBlast {
-              final Vec3 center;
-              final int cx, cy, cz;
-              final NukeType type;
-              final long[] columns;
-              int colIndex = 0;
-              int tickAge = 0;
-              boolean neutronApplied = false;
-
-              ActiveBlast(Vec3 pos, NukeType type) {
-                this.center = pos;
-                this.cx = (int)Math.floor(pos.x);
-                this.cy = (int)Math.floor(pos.y);
-                this.cz = (int)Math.floor(pos.z);
-                this.type = type;
-                int r = type.radius;
-                int r2 = r * r;
-                long[] tmp = new long[(r * 2 + 1) * (r * 2 + 1)];
-                int count = 0;
-                for (int dx = -r; dx <= r; dx++) {
-                  for (int dz = -r; dz <= r; dz++) {
-                    int d2 = dx * dx + dz * dz;
-                    if (d2 <= r2) {
-                      tmp[count++] = ((long)d2 << 32) | ((long)(dx + 512) << 16) | (long)(dz + 512);
-                    }
-                  }
+            public static void onTick(TickEvent.LevelTickEvent ev) {
+              if (ev.phase != TickEvent.Phase.END || !(ev.level instanceof ServerLevel lv)) return;
+              List<Blast> bs = BLASTS.get(lv.dimension());
+              if (bs != null) {
+                Iterator<Blast> it = bs.iterator();
+                while (it.hasNext()) {
+                  Blast b = it.next();
+                  if (stepBlast(lv, b)) it.remove();
                 }
-                this.columns = Arrays.copyOf(tmp, count);
-                Arrays.sort(this.columns);
               }
-
-              boolean tick(ServerLevel sl) {
-                tickAge++;
-                double prevWave = (tickAge - 1) * 4.2;
-                double currWave = tickAge * 4.2;
-                double maxWave = type.radius * 2.5 + 18.0;
-
-                if (prevWave < maxWave) {
-                  applyShockwave(sl, prevWave, currWave);
-                }
-
-                if (type.neutron && !neutronApplied && tickAge >= 3) {
-                  neutronApplied = true;
-                  double nr = type.radRadius;
-                  AABB box = new AABB(center.x - nr, center.y - nr, center.z - nr, center.x + nr, center.y + nr, center.z + nr);
-                  for (LivingEntity e : sl.getEntitiesOfClass(LivingEntity.class, box)) {
-                    if (e instanceof Player p && (p.isCreative() || p.isSpectator())) continue;
-                    if (HazmatArmorMaterial.hasFullHazmat(e)) continue;
-                    double d = e.position().distanceTo(center);
-                    if (d <= nr) {
-                      e.addEffect(new MobEffectInstance(MobEffects.WITHER, 400, 2));
-                      e.addEffect(new MobEffectInstance(MobEffects.POISON, 400, 1));
-                      e.hurt(sl.damageSources().magic(), (float)(32.0 * (1.0 - d / nr)));
-                    }
+              List<RadZone> rs = RADS.get(lv.dimension());
+              if (rs != null) {
+                Iterator<RadZone> it = rs.iterator();
+                while (it.hasNext()) {
+                  RadZone z = it.next();
+                  z.ticks--;
+                  if (z.ticks <= 0) {
+                    it.remove();
+                    continue;
                   }
-                }
-
-                int blockBudget = type.radius >= 60 ? 3200 : 2200;
-                int edits = 0;
-                int r = type.radius;
-                double r2 = (double)r * (double)r;
-                int minWorldY = sl.getMinBuildHeight() + 1;
-                int maxWorldY = sl.getMaxBuildHeight() - 1;
-                BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-
-                while (colIndex < columns.length && edits < blockBudget) {
-                  long packed = columns[colIndex++];
-                  int d2 = (int)(packed >>> 32);
-                  int dx = (int)((packed >>> 16) & 0xFFFF) - 512;
-                  int dz = (int)(packed & 0xFFFF) - 512;
-
-                  double dyMax = Math.sqrt(Math.max(0.0, r2 - d2));
-                  int depth = (int)Math.round(dyMax * (type.antimatter ? 0.92 : 0.62));
-                  int height = (int)Math.round(dyMax * 1.15) + 6;
-
-                  int yBot = Math.max(minWorldY, cy - depth);
-                  int yTop = Math.min(maxWorldY, cy + height);
-                  int x = cx + dx;
-                  int z = cz + dz;
-
-                  for (int y = yTop; y >= yBot; y--) {
-                    mp.set(x, y, z);
-                    BlockState st = sl.getBlockState(mp);
-                    if (st.isAir()) continue;
-                    if (st.getDestroySpeed(sl, mp) < 0.0f) continue;
-                    float res = st.getBlock().getExplosionResistance();
-                    if (!type.antimatter && res >= 1200.0f) continue;
-                    if (type.antimatter && res >= 2000.0f && d2 > (r * r) / 9) continue;
-                    sl.setBlock(mp, Blocks.AIR.defaultBlockState(), 2);
-                    edits++;
-                  }
-
-                  int floorY = yBot - 1;
-                  if (floorY >= minWorldY && !type.antimatter) {
-                    mp.set(x, floorY, z);
-                    BlockState floorSt = sl.getBlockState(mp);
-                    if (!floorSt.isAir() && floorSt.getDestroySpeed(sl, mp) >= 0.0f && floorSt.getBlock().getExplosionResistance() < 1200.0f) {
-                      double rnd = sl.random.nextDouble();
-                      if (type.lava) {
-                        if (rnd < 0.22) sl.setBlock(mp, Blocks.LAVA.defaultBlockState(), 2);
-                        else if (rnd < 0.58) sl.setBlock(mp, Blocks.MAGMA_BLOCK.defaultBlockState(), 2);
-                        else if (rnd < 0.72) {
-                          mp.set(x, floorY + 1, z);
-                          if (sl.getBlockState(mp).isAir()) sl.setBlock(mp, Blocks.FIRE.defaultBlockState(), 2);
-                        }
-                      } else if (type.trinitite) {
-                        if (rnd < 0.28) sl.setBlock(mp, ModBlocks.TRINITITE_BLOCK.get().defaultBlockState(), 2);
-                        else if (rnd < 0.56) sl.setBlock(mp, ModBlocks.RADIOACTIVE_ASH.get().defaultBlockState(), 2);
-                        else if (rnd < 0.68) {
-                          mp.set(x, floorY + 1, z);
-                          if (sl.getBlockState(mp).isAir()) sl.setBlock(mp, Blocks.FIRE.defaultBlockState(), 2);
-                        }
+                  if (z.ticks % 12 == 0) {
+                    AABB box = new AABB(z.c).inflate(z.r);
+                    for (LivingEntity e : lv.getEntitiesOfClass(LivingEntity.class, box)) {
+                      if (RealNukesMod.hasHazmat(e)) continue;
+                      double d = e.position().distanceTo(Vec3.atCenterOf(z.c));
+                      if (d < z.r) {
+                        int lvEf = d < z.r * 0.45 ? 1 : 0;
+                        e.addEffect(new MobEffectInstance(MobEffects.WITHER, 90, lvEf));
+                        e.addEffect(new MobEffectInstance(MobEffects.CONFUSION, 110, 0));
+                        e.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 90, 0));
                       }
-                      edits++;
+                    }
+                  }
+                  if (z.ticks % 4 == 0) {
+                    double a = lv.random.nextDouble() * 6.283;
+                    double rd = lv.random.nextDouble() * z.r * 0.8;
+                    lv.sendParticles(ParticleTypes.ASH, z.c.getX() + Math.cos(a) * rd, z.c.getY() + 18, z.c.getZ() + Math.sin(a) * rd, 3, 4, 4, 4, 0.02);
+                  }
+                }
+              }
+              if (lv.getGameTime() % 10 == 0) {
+                for (ServerPlayer sp : lv.players()) {
+                  if (sp.getMainHandItem().is(RealNukesMod.GEIGER_COUNTER.get()) || sp.getOffhandItem().is(RealNukesMod.GEIGER_COUNTER.get())) {
+                    double rad = getRad(lv, sp.position());
+                    if (rad > 0.5) {
+                      ChatFormatting c = rad < 10 ? ChatFormatting.YELLOW : ChatFormatting.RED;
+                      sp.displayClientMessage(Component.literal("RAD: " + String.format(Locale.ROOT, "%.1f", rad) + " RAD/s").withStyle(c, ChatFormatting.BOLD), true);
+                      lv.playSound(null, sp.blockPosition(), SoundEvents.STONE_BUTTON_CLICK_ON, SoundSource.PLAYERS, 0.5f, (float)Math.min(2.0, 1.0 + rad * 0.02));
                     }
                   }
                 }
-                return colIndex >= columns.length && prevWave >= maxWave;
+              }
+            }
+
+            private static boolean stepBlast(ServerLevel lv, Blast b) {
+              b.age++;
+              int maxD = Math.min(34, (int)(b.t.radius * 0.42));
+              BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+              int end = Math.min(b.cols.length, b.idx + 550);
+              for (; b.idx < end; b.idx++) {
+                int pk = b.cols[b.idx];
+                int dx = (pk >> 10) - 512;
+                int dz = (pk & 1023) - 512;
+                int wx = b.c.getX() + dx, wz = b.c.getZ() + dz;
+                mp.set(wx, b.c.getY(), wz);
+                if (!lv.isLoaded(mp)) continue;
+                double d = Math.sqrt(dx * dx + dz * dz) / b.t.radius;
+                if (d <= 1.0) {
+                  int floor = Math.max(lv.getMinBuildHeight() + 2, b.c.getY() - (int)(maxD * (1.0 - d * d)));
+                  int top = Math.min(lv.getMaxBuildHeight() - 1, b.c.getY() + Math.min(44, (int)(b.t.radius * 0.6)));
+                  for (int y = top; y >= floor; y--) {
+                    mp.set(wx, y, wz);
+                    BlockState st = lv.getBlockState(mp);
+                    if (st.isAir() || st.getBlock().getExplosionResistance() >= 1800f) continue;
+                    lv.setBlock(mp, Blocks.AIR.defaultBlockState(), 18);
+                  }
+                  mp.set(wx, floor - 1, wz);
+                  BlockState fst = lv.getBlockState(mp);
+                  if (!fst.isAir() && fst.getBlock().getExplosionResistance() < 1800f) {
+                    if (b.t.lava && d < 0.52 && lv.random.nextFloat() < 0.65f) lv.setBlock(mp, Blocks.LAVA.defaultBlockState(), 18);
+                    else if (b.t.anti && d < 0.75) lv.setBlock(mp, Blocks.OBSIDIAN.defaultBlockState(), 18);
+                    else if (b.t.tri && d < 0.45 && lv.random.nextFloat() < 0.7f) lv.setBlock(mp, RealNukesMod.TRINITITE_BLOCK.get().defaultBlockState(), 18);
+                    else if (d < 0.78 && lv.random.nextFloat() < 0.55f) lv.setBlock(mp, RealNukesMod.RADIOACTIVE_ASH.get().defaultBlockState(), 18);
+                  }
+                } else {
+                  int sy = lv.getHeight(Heightmap.Types.WORLD_SURFACE, wx, wz);
+                  for (int y = sy; y >= Math.max(lv.getMinBuildHeight() + 2, sy - 16); y--) {
+                    mp.set(wx, y, wz);
+                    BlockState st = lv.getBlockState(mp);
+                    if (st.isAir() || st.getBlock().getExplosionResistance() >= 1800f) continue;
+                    if (st.is(BlockTags.LEAVES) || ((st.getBlock() instanceof AbstractGlassBlock || st.is(Blocks.GLASS_PANE) || st.getBlock() instanceof StainedGlassPaneBlock) && !st.is(RealNukesMod.REINFORCED_BUNKER_GLASS.get()))) {
+                      lv.setBlock(mp, Blocks.AIR.defaultBlockState(), 18);
+                    } else if (st.is(Blocks.GRASS_BLOCK)) {
+                      lv.setBlock(mp, (lv.random.nextFloat() < 0.4f ? RealNukesMod.RADIOACTIVE_ASH.get() : Blocks.COARSE_DIRT).defaultBlockState(), 18);
+                      if (lv.random.nextFloat() < 0.08f) {
+                        mp.set(wx, y + 1, wz);
+                        if (lv.getBlockState(mp).isAir()) lv.setBlock(mp, Blocks.FIRE.defaultBlockState(), 18);
+                      }
+                      break;
+                    }
+                  }
+                }
+              }
+              double maxSh = b.t.radius * 2.3;
+              if (b.shock < maxSh) {
+                double prev = b.shock;
+                b.shock += 4.5;
+                AABB box = new AABB(b.c).inflate(b.shock + 2);
+                for (Entity e : lv.getEntitiesOfClass(Entity.class, box)) {
+                  if (e instanceof NukeEntities.NuclearCloudEntity) continue;
+                  Vec3 dir = e.position().subtract(Vec3.atCenterOf(b.c));
+                  double dist = dir.length();
+                  if (dist >= prev - 2 && dist <= b.shock + 2) {
+                    double f = Math.max(0.05, 1.0 - dist / maxSh);
+                    Vec3 n = dist > 0.1 ? dir.normalize() : new Vec3(0, 1, 0);
+                    double k = (b.t.anti && b.age < 5) ? -1.4 : 3.2 * f;
+                    e.setDeltaMovement(e.getDeltaMovement().add(n.x * k, Math.max(0.4, n.y * k + 1.1 * f), n.z * k));
+                    e.hurtMarked = true;
+                    float dmg = (float)(b.t.radius * 1.4 * f);
+                    if (e instanceof LivingEntity le && RealNukesMod.hasHazmat(le)) dmg *= 0.35f;
+                    if (dmg > 1f) e.hurt(b.t.neu ? lv.damageSources().magic() : lv.damageSources().explosion(null, null), dmg);
+                    if (dist < b.t.radius * 1.2) e.setSecondsOnFire(8);
+                  }
+                }
+              }
+              return b.idx >= b.cols.length && b.shock >= maxSh;
+            }
+          }
+          """)
+
+          # --- VolumetricRenderTypes.java ---
+          w(J + 'VolumetricRenderTypes.java', """
+          package com.realnukes;
+          import com.mojang.blaze3d.vertex.*;
+          import net.minecraft.client.renderer.*;
+          import net.minecraft.resources.ResourceLocation;
+          public class VolumetricRenderTypes extends RenderType {
+            private VolumetricRenderTypes(String n, VertexFormat f, VertexFormat.Mode m, int b, boolean c, boolean s, Runnable st, Runnable cl) {
+              super(n, f, m, b, c, s, st, cl);
+            }
+            public static RenderType cloud(ResourceLocation tex) {
+              return RenderType.create("rn_vol_cloud", DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS, 512, false, true,
+                RenderType.CompositeState.builder()
+                  .setShaderState(RENDERTYPE_ENTITY_TRANSLUCENT_SHADER)
+                  .setTextureState(new RenderStateShard.TextureStateShard(tex, true, false))
+                  .setTransparencyState(TRANSLUCENT_TRANSPARENCY)
+                  .setCullState(NO_CULL)
+                  .setLightmapState(LIGHTMAP)
+                  .setOverlayState(OVERLAY)
+                  .setWriteMaskState(COLOR_WRITE)
+                  .setDepthTestState(LEQUAL_DEPTH_TEST)
+                  .createCompositeState(false));
+            }
+            public static RenderType glow(ResourceLocation tex) {
+              return RenderType.create("rn_vol_glow", DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS, 256, false, true,
+                RenderType.CompositeState.builder()
+                  .setShaderState(RENDERTYPE_EYES_SHADER)
+                  .setTextureState(new RenderStateShard.TextureStateShard(tex, true, false))
+                  .setTransparencyState(ADDITIVE_TRANSPARENCY)
+                  .setCullState(NO_CULL)
+                  .setWriteMaskState(COLOR_WRITE)
+                  .setDepthTestState(LEQUAL_DEPTH_TEST)
+                  .createCompositeState(false));
+            }
+          }
+          """)
+
+          # --- NuclearCloudRenderer.java ---
+          w(J + 'NuclearCloudRenderer.java', """
+          package com.realnukes;
+          import java.util.*;
+          import com.mojang.blaze3d.vertex.*;
+          import net.minecraft.client.*;
+          import net.minecraft.client.renderer.*;
+          import net.minecraft.client.renderer.culling.Frustum;
+          import net.minecraft.client.renderer.entity.*;
+          import net.minecraft.client.renderer.texture.OverlayTexture;
+          import net.minecraft.resources.ResourceLocation;
+          import net.minecraft.world.phys.Vec3;
+          import org.joml.*;
+
+          public class NuclearCloudRenderer extends EntityRenderer<NukeEntities.NuclearCloudEntity> {
+            private static final ResourceLocation CLOUD_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/volumetric_cloud.png");
+            private static final ResourceLocation FIRE_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/fireball_core.png");
+            private static final ResourceLocation RING_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/shockwave_ring.png");
+            private static final RenderType RT_CLOUD = VolumetricRenderTypes.cloud(CLOUD_TEX);
+            private static final RenderType RT_FIRE = VolumetricRenderTypes.glow(FIRE_TEX);
+            private static final RenderType RT_RING = VolumetricRenderTypes.cloud(RING_TEX);
+
+            private static final class Puff {
+              float x, y, z, sz, rot, r, g, b, a, dsq;
+              int tile;
+            }
+
+            private final Puff[] pool = new Puff[520];
+            private final Puff[] active = new Puff[520];
+
+            public NuclearCloudRenderer(EntityRendererProvider.Context c) {
+              super(c);
+              for (int i = 0; i < pool.length; i++) pool[i] = new Puff();
+            }
+
+            @Override public ResourceLocation getTextureLocation(NukeEntities.NuclearCloudEntity e) { return CLOUD_TEX; }
+            @Override public boolean shouldRender(NukeEntities.NuclearCloudEntity e, Frustum f, double x, double y, double z) { return true; }
+
+            private static float c01(float v) { return v < 0f ? 0f : (v > 1f ? 1f : v); }
+            private static float hash(int i) {
+              float s = (float)(Math.sin(i * 12.9898 + 78.233) * 43758.5453);
+              return s - (float)Math.floor(s);
+            }
+
+            private int addPuff(int n, float x, float y, float z, float sz, float rot, float r, float g, float b, float a, int tile, float cx, float cy, float cz) {
+              if (n >= pool.length - 1 || a < 0.01f) return n;
+              Puff p = pool[n];
+              p.x = x; p.y = y; p.z = z; p.sz = sz; p.rot = rot;
+              p.r = c01(r); p.g = c01(g); p.b = c01(b); p.a = c01(a);
+              p.tile = tile & 3;
+              float dx = x - cx, dy = y - cy, dz = z - cz;
+              p.dsq = dx * dx + dy * dy + dz * dz;
+              active[n] = p;
+              return n + 1;
+            }
+
+            private void shadeAndAdd(int[] cnt, float px, float py, float pz, float nx, float ny, float nz, float sz, float rot, float ao, float fireAmt, float alpha, int tile, RealNukesMod.NukeType ty, float coreH, float embH, float cx, float cy, float cz) {
+              float sun = c01(0.50f + 0.50f * (nx * 0.55f + ny * 0.72f + nz * 0.42f));
+              float lit = (0.36f + 0.76f * sun) * ao;
+              float sr = ty.sr * lit * (1.0f + 0.08f * sun);
+              float sg = ty.sg * lit * (0.99f + 0.04f * sun);
+              float sb = ty.sb * lit * (1.06f - 0.08f * sun);
+              float fh = c01(fireAmt * (embH * 1.35f + coreH * 1.6f));
+              float wh = c01(fireAmt * coreH * 1.4f);
+              float rr = sr * (1f - fh * 0.55f) + ty.fr * fh * 1.15f + wh * 0.8f;
+              float gg = sg * (1f - fh * 0.65f) + ty.fg * fh * 1.05f + wh * 0.75f;
+              float bb = sb * (1f - fh * 0.80f) + ty.fb * fh * 0.85f + wh * 0.65f;
+              cnt[0] = addPuff(cnt[0], px, py, pz, sz, rot, rr, gg, bb, alpha, tile, cx, cy, cz);
+            }
+
+            @Override
+            public void render(NukeEntities.NuclearCloudEntity e, float yaw, float pt, PoseStack ps, MultiBufferSource buf, int pl) {
+              RealNukesMod.NukeType ty = e.getNukeType();
+              float t = e.getCloudAge() + pt;
+              float dur = ty.dur;
+              float p = c01(t / dur);
+              float fade = p > 0.78f ? c01((1f - p) / 0.22f) : 1f;
+              float rise = 1f - (float)Math.pow(1f - Math.min(1f, t / (dur * 0.33f)), 3.1);
+              float H = ty.cloudH * (0.07f + 0.93f * rise);
+              float R = ty.cloudR * (0.24f + 0.76f * (float)Math.pow(Math.min(1f, t / (dur * 0.38f)), 0.56)) + (p > 0.34f ? (p - 0.34f) * ty.cloudR * 0.70f : 0f);
+              float coreH = (float)Math.exp(-t * 0.017);
+              float embH = (float)Math.exp(-t * 0.0052);
+
+              Camera cam = this.entityRenderDispatcher.camera;
+              Vec3 cp = cam.getPosition();
+              float cx = (float)(cp.x - e.getX()), cy = (float)(cp.y - e.getY()), cz = (float)(cp.z - e.getZ());
+              Vector3f lk = cam.getLookVector(), up = cam.getUpVector();
+              float rx = lk.y * up.z - lk.z * up.y;
+              float ry = lk.z * up.x - lk.x * up.z;
+              float rz = lk.x * up.y - lk.y * up.x;
+
+              PoseStack.Pose lp = ps.last();
+              Matrix4f mat = lp.pose();
+              Matrix3f nrm = lp.normal();
+
+              if (t < 75f) {
+                drawFresnelDome(mat, nrm, buf.getBuffer(RT_RING), t * 4.5f, c01((1f - t / 75f) * 0.75f), cx, cy, cz);
               }
 
-              private void applyShockwave(ServerLevel sl, double minR, double maxR) {
-                AABB box = new AABB(
-                  center.x - maxR, center.y - maxR, center.z - maxR,
-                  center.x + maxR, center.y + maxR, center.z + maxR
-                );
-                for (LivingEntity e : sl.getEntitiesOfClass(LivingEntity.class, box)) {
-                  double d = e.position().distanceTo(center);
-                  if (d < minR || d > maxR) continue;
-                  if (e instanceof Player p && (p.isCreative() || p.isSpectator())) continue;
-                  double factor = Math.max(0.0, 1.0 - d / (type.radius * 2.5 + 18.0));
-                  Vec3 push = e.position().subtract(center);
-                  if (push.lengthSqr() < 0.001) push = new Vec3(0, 1, 0);
-                  push = push.normalize().scale(2.8 * factor + 0.4);
-                  e.setDeltaMovement(e.getDeltaMovement().add(push.x, Math.max(0.35, push.y + 0.55 * factor), push.z));
-                  e.hurtMarked = true;
-                  float dmg = (float)(factor * (type.radius * 1.45));
-                  if (HazmatArmorMaterial.hasFullHazmat(e)) dmg *= 0.45f;
-                  if (dmg > 1.0f) {
-                    e.hurt(sl.damageSources().explosion(null, null), dmg);
+              int[] cnt = {0};
+
+              // Base surge (64 camadas)
+              float baseR = R * (0.52f + p * 0.95f);
+              for (int i = 0; i < 64; i++) {
+                float a = (float)(i * 6.28318 / 64.0 + t * 0.004 * (i % 2 == 0 ? 1 : -1));
+                float rr = baseR * (0.76f + 0.36f * hash(i * 3));
+                float yy = 3.5f + hash(i * 5) * R * 0.24f;
+                float px = (float)Math.cos(a) * rr, pz = (float)Math.sin(a) * rr;
+                float sz = R * (0.24f + 0.14f * hash(i * 7)) * (0.55f + 0.5f * Math.min(1f, t / 30f));
+                shadeAndAdd(cnt, px, yy, pz, (float)Math.cos(a), 0.35f, (float)Math.sin(a), sz, hash(i) * 6.28f + t * 0.015f * (i % 2 == 0 ? 1 : -1), 0.68f, 0.35f * coreH, 0.62f * fade, i, ty, coreH, embH, cx, cy, cz);
+              }
+
+              // Coluna ascendente giratoria (84 camadas)
+              float stemR = R * 0.23f;
+              for (int i = 0; i < 84; i++) {
+                float ph = (i / 84f + t * 0.0058f) % 1f;
+                float yy = ph * H * 0.92f;
+                float waist = 1f - 0.34f * (float)Math.sin(ph * 3.14159);
+                float flare = ph > 0.75f ? 1f + (ph - 0.75f) * 2.4f : (ph < 0.18f ? 1f + (0.18f - ph) * 3.2f : 1f);
+                float rad = stemR * waist * flare * (0.35f + 0.75f * hash(i * 11));
+                float ang = hash(i * 13) * 6.28318f + ph * 3.5f + t * 0.012f;
+                float px = (float)Math.cos(ang) * rad, pz = (float)Math.sin(ang) * rad;
+                float sz = stemR * (0.92f + 0.48f * hash(i * 17)) * flare;
+                float inner = 1f - c01(rad / (stemR * 1.2f));
+                float ao = 0.58f + 0.30f * ph;
+                float fAmt = (0.25f + 0.75f * inner) * (0.35f + 0.65f * ph);
+                shadeAndAdd(cnt, px, yy, pz, (float)Math.cos(ang), 0.15f, (float)Math.sin(ang), sz, hash(i * 19) * 6.28f - t * 0.02f, ao, fAmt, 0.72f * fade, i, ty, coreH, embH, cx, cy, cz);
+              }
+
+              // Toroide rolante do topo (155 camadas)
+              float capH = R * 0.56f * (1f - p * 0.25f);
+              for (int i = 0; i < 155; i++) {
+                float az = (float)(i * 2.3999632);
+                float roll = (hash(i * 23) * 6.28318f + t * 0.046f) % 6.28318f;
+                float maj = R * (0.52f + 0.20f * hash(i * 29));
+                float minR = R * (0.28f + 0.14f * hash(i * 31));
+                float cr = (float)Math.cos(roll), sr = (float)Math.sin(roll);
+                float rad = maj + minR * cr;
+                float px = (float)Math.cos(az) * rad, pz = (float)Math.sin(az) * rad;
+                float py = H + sr * capH * 0.62f;
+                float nx = (float)Math.cos(az) * cr, ny = sr, nz = (float)Math.sin(az) * cr;
+                float sz = R * (0.26f + 0.16f * hash(i * 37));
+                float ao = 0.55f + 0.52f * c01(ny * 0.5f + 0.5f);
+                float fAmt = c01(0.85f - ny * 0.75f - cr * 0.25f);
+                shadeAndAdd(cnt, px, py, pz, nx, ny, nz, sz, hash(i * 41) * 6.28f + t * 0.018f * (i % 2 == 0 ? 1 : -1), ao, fAmt, 0.78f * fade, i, ty, coreH, embH, cx, cy, cz);
+              }
+
+              // Bigorna estratosferica iluminada pelo sol (60 camadas)
+              for (int i = 0; i < 60; i++) {
+                float az = (float)(i * 2.3999632 + 1.1);
+                float u = hash(i * 43);
+                float rad = R * 0.68f * (float)Math.sqrt(u);
+                float domeY = (float)Math.sqrt(Math.max(0f, 1f - u)) * capH * 0.95f;
+                float px = (float)Math.cos(az) * rad, pz = (float)Math.sin(az) * rad;
+                float py = H + capH * 0.18f + domeY;
+                float sz = R * (0.28f + 0.15f * hash(i * 47));
+                shadeAndAdd(cnt, px, py, pz, px / (R + 1f), 0.88f, pz / (R + 1f), sz, hash(i * 53) * 6.28f + t * 0.01f, 1.08f, 0.42f * coreH, 0.82f * fade, i, ty, coreH, embH, cx, cy, cz);
+              }
+
+              // Aneis de condensacao de Wilson
+              if (t > 10f && t < 260f) {
+                float wf = c01((t - 10f) / 16f) * c01((260f - t) / 90f) * 0.55f;
+                for (int w = 0; w < ty.rings; w++) {
+                  float wy = H * (0.36f + w * 0.20f);
+                  float wr = R * (0.62f + w * 0.24f) * (0.75f + (t / 260f) * 0.65f);
+                  for (int i = 0; i < 24; i++) {
+                    float a = (float)(i * 6.28318 / 24.0 + w);
+                    cnt[0] = addPuff(cnt[0], (float)Math.cos(a) * wr, wy, (float)Math.sin(a) * wr, R * 0.20f, a + t * 0.01f, 0.96f, 0.98f, 1.0f, wf, i, cx, cy, cz);
                   }
-                  if (factor > 0.35 && !type.antimatter) {
-                    e.setSecondsOnFire((int)(8 * factor));
-                  }
+                }
+              }
+
+              // Ordenacao por profundidade da camera a cada frame
+              Arrays.sort(active, 0, cnt[0], (a, b) -> Float.compare(b.dsq, a.dsq));
+              VertexConsumer vc = buf.getBuffer(RT_CLOUD);
+              for (int i = 0; i < cnt[0]; i++) {
+                emitBillboard(mat, nrm, vc, active[i], rx, ry, rz, up.x, up.y, up.z, true);
+              }
+
+              // Fogo incandescente aditivo brilhando nas fendas (32 camadas)
+              if (t < 200f) {
+                VertexConsumer fvc = buf.getBuffer(RT_FIRE);
+                float fa = c01(1f - t / 200f);
+                float fbY = H * (0.45f + 0.55f * Math.min(1f, t / 60f));
+                for (int i = 0; i < 32; i++) {
+                  float az = (float)(i * 2.39996);
+                  float el = (hash(i * 61) - 0.5f) * 2.4f;
+                  float frad = R * 0.38f * (0.4f + 0.7f * hash(i * 67));
+                  Puff fp = pool[pool.length - 1];
+                  fp.x = (float)(Math.cos(az) * Math.cos(el)) * frad;
+                  fp.y = fbY + (float)Math.sin(el) * frad * 0.75f;
+                  fp.z = (float)(Math.sin(az) * Math.cos(el)) * frad;
+                  fp.sz = R * (0.32f + 0.20f * hash(i * 71)) * (0.7f + 0.4f * coreH);
+                  fp.rot = hash(i * 73) * 6.28f + t * 0.03f;
+                  fp.r = c01(ty.fr * 0.7f + coreH * 0.8f);
+                  fp.g = c01(ty.fg * 0.65f + coreH * 0.75f);
+                  fp.b = c01(ty.fb * 0.5f + coreH * 0.65f);
+                  fp.a = fa * 0.58f;
+                  emitBillboard(mat, nrm, fvc, fp, rx, ry, rz, up.x, up.y, up.z, false);
+                }
+              }
+            }
+
+            private static void emitBillboard(Matrix4f mat, Matrix3f nrm, VertexConsumer vc, Puff p, float rx, float ry, float rz, float ux, float uy, float uz, boolean atlas) {
+              float cs = (float)Math.cos(p.rot), sn = (float)Math.sin(p.rot);
+              float ax = (rx * cs + ux * sn) * p.sz, ay = (ry * cs + uy * sn) * p.sz, az = (rz * cs + uz * sn) * p.sz;
+              float bx = (-rx * sn + ux * cs) * p.sz, by = (-ry * sn + uy * cs) * p.sz, bz = (-rz * sn + uz * cs) * p.sz;
+              float u0 = atlas ? ((p.tile & 1) * 0.5f + 0.01f) : 0f, u1 = atlas ? (u0 + 0.48f) : 1f;
+              float v0 = atlas ? (((p.tile >> 1) & 1) * 0.5f + 0.01f) : 0f, v1 = atlas ? (v0 + 0.48f) : 1f;
+              vc.vertex(mat, p.x - ax - bx, p.y - ay - by, p.z - az - bz).color(p.r, p.g, p.b, p.a).uv(u0, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
+              vc.vertex(mat, p.x + ax - bx, p.y + ay - by, p.z + az - bz).color(p.r, p.g, p.b, p.a).uv(u1, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
+              vc.vertex(mat, p.x + ax + bx, p.y + ay + by, p.z + az + bz).color(p.r, p.g, p.b, p.a).uv(u1, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
+              vc.vertex(mat, p.x - ax + bx, p.y - ay + by, p.z - az + bz).color(p.r, p.g, p.b, p.a).uv(u0, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
+            }
+
+            private static void drawFresnelDome(Matrix4f mat, Matrix3f nrm, VertexConsumer vc, float rad, float alpha, float cx, float cy, float cz) {
+              int su = 24, sv = 12;
+              for (int iv = 0; iv < sv; iv++) {
+                float p0 = (float)(Math.PI * 0.5 * iv / sv), p1 = (float)(Math.PI * 0.5 * (iv + 1) / sv);
+                for (int iu = 0; iu < su; iu++) {
+                  float t0 = (float)(6.28318 * iu / su), t1 = (float)(6.28318 * (iu + 1) / su);
+                  domeV(mat, nrm, vc, p0, t0, rad, alpha, cx, cy, cz);
+                  domeV(mat, nrm, vc, p0, t1, rad, alpha, cx, cy, cz);
+                  domeV(mat, nrm, vc, p1, t1, rad, alpha, cx, cy, cz);
+                  domeV(mat, nrm, vc, p1, t0, rad, alpha, cx, cy, cz);
+                }
+              }
+            }
+
+            private static void domeV(Matrix4f mat, Matrix3f nrm, VertexConsumer vc, float ph, float th, float rad, float alpha, float cx, float cy, float cz) {
+              float nx = (float)(Math.sin(ph) * Math.cos(th)), ny = (float)Math.cos(ph), nz = (float)(Math.sin(ph) * Math.sin(th));
+              float px = nx * rad, py = ny * rad, pz = nz * rad;
+              float vx = cx - px, vy = cy - py, vz = cz - pz;
+              float vl = (float)Math.sqrt(vx * vx + vy * vy + vz * vz) + 0.001f;
+              float dot = Math.abs((nx * vx + ny * vy + nz * vz) / vl);
+              float fr = (float)Math.pow(1.0 - dot, 2.1) * alpha;
+              vc.vertex(mat, px, py, pz).color(0.95f, 0.97f, 1f, c01(fr)).uv(th / 6.283f, ph / 1.57f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, nx, ny, nz).endVertex();
+            }
+
+            public static class PrimedRenderer extends EntityRenderer<NukeEntities.PrimedNukeEntity> {
+              public PrimedRenderer(EntityRendererProvider.Context c) { super(c); }
+              @Override public ResourceLocation getTextureLocation(NukeEntities.PrimedNukeEntity e) { return CLOUD_TEX; }
+              @Override
+              public void render(NukeEntities.PrimedNukeEntity e, float y, float pt, PoseStack ps, MultiBufferSource buf, int pl) {
+                ps.pushPose();
+                float s = 1f + (e.getFuse() % 6 < 3 ? 0.08f : 0f);
+                ps.scale(s, s, s);
+                ps.translate(-0.5, 0, -0.5);
+                Minecraft.getInstance().getBlockRenderer().renderSingleBlock(RealNukesMod.blockFor(e.getNukeType()).defaultBlockState(), ps, buf, LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY);
+                ps.popPose();
+              }
+            }
+
+            public static class MissileRenderer extends EntityRenderer<NukeEntities.FallingMissileEntity> {
+              private static final ResourceLocation MT = new ResourceLocation(RealNukesMod.MODID, "textures/entity/missile.png");
+              public MissileRenderer(EntityRendererProvider.Context c) { super(c); }
+              @Override public ResourceLocation getTextureLocation(NukeEntities.FallingMissileEntity e) { return MT; }
+              @Override
+              public void render(NukeEntities.FallingMissileEntity e, float y, float pt, PoseStack ps, MultiBufferSource buf, int pl) {
+                PoseStack.Pose lp = ps.last();
+                Matrix4f m = lp.pose();
+                Matrix3f n = lp.normal();
+                VertexConsumer vc = buf.getBuffer(RenderType.entityTranslucent(MT));
+                for (int i = 0; i < 8; i++) {
+                  float a0 = (float)(i * 6.283 / 8), a1 = (float)((i + 1) * 6.283 / 8), r = 0.45f;
+                  float x0 = (float)Math.cos(a0) * r, z0 = (float)Math.sin(a0) * r;
+                  float x1 = (float)Math.cos(a1) * r, z1 = (float)Math.sin(a1) * r;
+                  vc.vertex(m, 0, 0, 0).color(1f, 0.2f, 0.2f, 1f).uv(0.5f, 0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, 0, -1, 0).endVertex();
+                  vc.vertex(m, x0, 1.2f, z0).color(0.9f, 0.9f, 0.95f, 1f).uv(0f, 0.3f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, x0, 0, z0).endVertex();
+                  vc.vertex(m, x1, 1.2f, z1).color(0.9f, 0.9f, 0.95f, 1f).uv(1f, 0.3f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, x1, 0, z1).endVertex();
+                  vc.vertex(m, 0, 0, 0).color(1f, 0.2f, 0.2f, 1f).uv(0.5f, 0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, 0, -1, 0).endVertex();
+                  vc.vertex(m, x0, 1.2f, z0).color(0.9f, 0.9f, 0.95f, 1f).uv(0f, 0.3f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, x0, 0, z0).endVertex();
+                  vc.vertex(m, x0, 4.5f, z0).color(0.85f, 0.85f, 0.9f, 1f).uv(0f, 1f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, x0, 0, z0).endVertex();
+                  vc.vertex(m, x1, 4.5f, z1).color(0.85f, 0.85f, 0.9f, 1f).uv(1f, 1f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, x1, 0, z1).endVertex();
+                  vc.vertex(m, x1, 1.2f, z1).color(0.9f, 0.9f, 0.95f, 1f).uv(1f, 0.3f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(n, x1, 0, z1).endVertex();
                 }
               }
             }
           }
           """)
 
-          w(J + 'ClientEffects.java', """
+          # --- ClientCinema.java ---
+          w(J + 'ClientCinema.java', """
           package com.realnukes;
-          import java.util.HashSet;
-          import java.util.Set;
+          import java.util.*;
           import net.minecraft.client.Minecraft;
-          import net.minecraft.sounds.SoundEvents;
-          import net.minecraft.sounds.SoundSource;
-          import net.minecraft.util.Mth;
+          import net.minecraft.client.player.LocalPlayer;
+          import net.minecraft.sounds.*;
+          import net.minecraft.world.effect.MobEffects;
           import net.minecraft.world.phys.Vec3;
           import net.minecraftforge.api.distmarker.Dist;
-          import net.minecraftforge.client.event.RenderGuiEvent;
-          import net.minecraftforge.client.event.ViewportEvent;
+          import net.minecraftforge.client.event.*;
+          import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
           import net.minecraftforge.event.TickEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
           import net.minecraftforge.fml.common.Mod;
 
           @Mod.EventBusSubscriber(modid = RealNukesMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
-          public class ClientEffects {
-            private static final Set<Integer> FLASHED = new HashSet<>();
-            private static final Set<Integer> SHOCKED = new HashSet<>();
-            private static int flashAge = 999;
-            private static float flashPower = 0f;
-            private static float flashR = 1f, flashG = 0.96f, flashB = 0.88f;
-            private static int shakeTicks = 0;
-            private static int shakeMaxTicks = 1;
-            private static float shakePower = 0f;
+          public class ClientCinema {
+            static class Pending {
+              int ticks;
+              float shake, vol;
+              Pending(int t, float s, float v) { ticks = t; shake = s; vol = v; }
+            }
+            private static final List<Pending> QUEUE = new ArrayList<>();
+            private static float flash = 0f, heat = 0f, shake = 0f, fR = 1f, fG = 0.96f, fB = 0.88f;
+            private static int flash2Timer = 0;
+            private static float flash2Pow = 0f;
+            private static int tick = 0;
 
-            public static void onCloudTick(MushroomCloudEntity cloud) {
+            @SubscribeEvent
+            public static void onClientTick(TickEvent.ClientTickEvent ev) {
+              if (ev.phase != TickEvent.Phase.END) return;
               Minecraft mc = Minecraft.getInstance();
-              if (mc.player == null || mc.level == null) return;
-              if (FLASHED.size() > 256) FLASHED.clear();
-              if (SHOCKED.size() > 256) SHOCKED.clear();
+              LocalPlayer p = mc.player;
+              if (p == null || mc.level == null) return;
+              tick++;
 
-              NukeType type = cloud.getNukeType();
-              int id = cloud.getId();
-              int age = cloud.getCloudAge();
-              double dist = mc.player.position().distanceTo(cloud.position());
+              synchronized (ClientCinemaState.INCOMING) {
+                for (ClientCinemaState.Event e : ClientCinemaState.INCOMING) {
+                  double d = p.position().distanceTo(new Vec3(e.x, e.y, e.z));
+                  float fac = (float)Math.max(0.0, 1.30 - d / 380.0);
+                  float pow = Math.min(1f, e.type.flash * fac);
+                  flash = Math.min(1f, Math.max(flash, pow));
+                  flash2Pow = Math.max(flash2Pow, pow * 0.92f);
+                  flash2Timer = 8;
+                  heat = Math.min(0.32f, Math.max(heat, 0.30f * fac));
+                  fR = 0.75f + 0.25f * e.type.fr;
+                  fG = 0.72f + 0.28f * e.type.fg;
+                  fB = 0.68f + 0.32f * e.type.fb;
+                  int delay = Math.max(1, (int)(d / 2.2));
+                  QUEUE.add(new Pending(delay, e.type.shake * Math.min(1f, fac), Math.min(1f, fac)));
+                }
+                ClientCinemaState.INCOMING.clear();
+              }
 
-              if (age <= 20 && FLASHED.add(id)) {
-                double maxDist = type.cloudR * 8.5 + 80.0;
-                if (dist < maxDist) {
-                  float atten = (float)Math.pow(1.0 - dist / maxDist, 0.55);
-                  flashAge = 0;
-                  flashPower = Math.max(flashPower, type.flash * atten);
-                  flashR = 0.55f + 0.45f * type.fr;
-                  flashG = 0.55f + 0.45f * type.fg;
-                  flashB = 0.55f + 0.45f * type.fb;
+              if (flash2Timer > 0) {
+                flash2Timer--;
+                if (flash2Timer == 0) {
+                  flash = Math.min(1f, Math.max(flash, flash2Pow));
+                  flash2Pow = 0f;
                 }
               }
 
-              double waveRadius = age * 4.2;
-              double maxSoundDist = type.cloudR * 7.5 + 90.0;
-              if (!SHOCKED.contains(id) && waveRadius >= dist && dist < maxSoundDist) {
-                SHOCKED.add(id);
-                float atten = (float)Math.pow(1.0 - dist / maxSoundDist, 0.75);
-                shakePower = Math.max(shakePower, type.shake * atten);
-                shakeMaxTicks = Math.max(45, (int)(75 * atten));
-                shakeTicks = shakeMaxTicks;
-
-                Vec3 p = mc.player.position();
-                mc.level.playLocalSound(p.x, p.y, p.z, SoundEvents.GENERIC_EXPLODE, SoundSource.BLOCKS, 2.5f * atten + 0.4f, 0.45f, false);
-                mc.level.playLocalSound(p.x, p.y, p.z, SoundEvents.LIGHTNING_BOLT_THUNDER, SoundSource.WEATHER, 3.0f * atten + 0.5f, 0.55f, false);
-                mc.level.playLocalSound(p.x, p.y, p.z, SoundEvents.WARDEN_SONIC_BOOM, SoundSource.BLOCKS, 1.8f * atten + 0.3f, 0.4f, false);
+              Iterator<Pending> it = QUEUE.iterator();
+              while (it.hasNext()) {
+                Pending q = it.next();
+                q.ticks--;
+                if (q.ticks <= 0) {
+                  shake = Math.min(18f, shake + q.shake);
+                  mc.level.playLocalSound(p.getX(), p.getY(), p.getZ(), SoundEvents.GENERIC_EXPLODE, SoundSource.AMBIENT, 3.2f * q.vol, 0.34f, false);
+                  mc.level.playLocalSound(p.getX(), p.getY(), p.getZ(), SoundEvents.WARDEN_SONIC_BOOM, SoundSource.AMBIENT, 2.6f * q.vol, 0.44f, false);
+                  mc.level.playLocalSound(p.getX(), p.getY(), p.getZ(), SoundEvents.LIGHTNING_BOLT_THUNDER, SoundSource.AMBIENT, 3.0f * q.vol, 0.48f, false);
+                  it.remove();
+                }
               }
+
+              flash *= 0.90f; if (flash < 0.005f) flash = 0f;
+              heat *= 0.975f; if (heat < 0.005f) heat = 0f;
+              shake *= 0.89f; if (shake < 0.02f) shake = 0f;
             }
 
             @SubscribeEvent
-            public static void onClientTick(TickEvent.ClientTickEvent event) {
-              if (event.phase != TickEvent.Phase.END) return;
-              if (flashAge < 70) {
-                flashAge++;
-              } else {
-                flashPower = 0f;
-              }
-              if (shakeTicks > 0) {
-                shakeTicks--;
-                if (shakeTicks <= 0) shakePower = 0f;
-              }
+            public static void onCam(ViewportEvent.ComputeCameraAngles ev) {
+              if (shake <= 0.02f) return;
+              double t = tick + ev.getPartialTick();
+              ev.setYaw(ev.getYaw() + (float)(Math.sin(t * 2.7) * shake * 0.55));
+              ev.setPitch(ev.getPitch() + (float)(Math.cos(t * 3.3) * shake * 0.45));
+              ev.setRoll(ev.getRoll() + (float)(Math.sin(t * 4.1) * shake * 0.65));
             }
 
             @SubscribeEvent
-            public static void onRenderGui(RenderGuiEvent.Post event) {
-              if (flashPower <= 0.01f || flashAge >= 70) return;
-              float t = flashAge + event.getPartialTick();
-              float alpha;
-              if (t < 4f) {
-                alpha = (t / 4f) * 0.98f;
-              } else if (t < 11f) {
-                alpha = Mth.lerp((t - 4f) / 7f, 0.98f, 0.52f);
-              } else if (t < 18f) {
-                alpha = Mth.lerp((t - 11f) / 7f, 0.52f, 0.92f);
-              } else {
-                float fade = 1f - Mth.clamp((t - 18f) / 52f, 0f, 1f);
-                alpha = 0.92f * fade * fade;
+            public static void onOverlay(RenderGuiOverlayEvent.Post ev) {
+              if (ev.getOverlay() != VanillaGuiOverlay.HOTBAR.type()) return;
+              int w = ev.getWindow().getGuiScaledWidth(), h = ev.getWindow().getGuiScaledHeight();
+              if (heat > 0.01f) {
+                int a = (int)(heat * 255);
+                ev.getGuiGraphics().fill(0, 0, w, h, (a << 24) | 0xFFB866);
               }
-              alpha = Mth.clamp(alpha * flashPower, 0f, 0.98f);
-              if (alpha <= 0.01f) return;
-
-              float whiteMix = t < 16f ? 0.78f : 0.25f;
-              int r = (int)(Mth.clamp(Mth.lerp(whiteMix, flashR, 1f), 0f, 1f) * 255f);
-              int g = (int)(Mth.clamp(Mth.lerp(whiteMix, flashG, 1f), 0f, 1f) * 255f);
-              int b = (int)(Mth.clamp(Mth.lerp(whiteMix, flashB, 1f), 0f, 1f) * 255f);
-              int a = (int)(alpha * 255f);
-              int argb = (a << 24) | (r << 16) | (g << 8) | b;
-              int w = event.getWindow().getGuiScaledWidth();
-              int h = event.getWindow().getGuiScaledHeight();
-              event.getGuiGraphics().fill(0, 0, w, h, argb);
-            }
-
-            @SubscribeEvent
-            public static void onCameraAngles(ViewportEvent.ComputeCameraAngles event) {
-              if (shakeTicks <= 0 || shakePower <= 0.01f) return;
-              float progress = (shakeTicks - (float)event.getPartialTick()) / (float)shakeMaxTicks;
-              if (progress <= 0f) return;
-              float amp = shakePower * progress * progress;
-              double time = (shakeMaxTicks - shakeTicks + event.getPartialTick()) * 1.85;
-              float yawOff = (float)(Math.sin(time * 2.3) * 0.65 + Math.cos(time * 4.1) * 0.35) * amp;
-              float pitchOff = (float)(Math.cos(time * 2.7) * 0.65 + Math.sin(time * 4.7) * 0.35) * amp;
-              float rollOff = (float)(Math.sin(time * 3.1) * 0.85) * amp * 1.15f;
-              event.setYaw(event.getYaw() + yawOff);
-              event.setPitch(event.getPitch() + pitchOff);
-              event.setRoll(event.getRoll() + rollOff);
+              if (flash > 0.01f) {
+                int a = (int)(Math.min(1f, flash) * 255);
+                int c = (a << 24) | ((int)(fR * 255) << 16) | ((int)(fG * 255) << 8) | (int)(fB * 255);
+                ev.getGuiGraphics().fill(0, 0, w, h, c);
+              }
+              LocalPlayer p = Minecraft.getInstance().player;
+              if (p != null && p.hasEffect(MobEffects.WITHER) && p.hasEffect(MobEffects.CONFUSION)) {
+                int a = (int)(45 + 25 * Math.sin(tick * 0.25));
+                int col = (a << 24) | 0x44FF55;
+                ev.getGuiGraphics().fill(0, 0, w, 10, col);
+                ev.getGuiGraphics().fill(0, h - 10, w, h, col);
+                ev.getGuiGraphics().fill(0, 0, 10, h, col);
+                ev.getGuiGraphics().fill(w - 10, 0, w, h, col);
+              }
             }
           }
           """)
 
-          w(J + 'PrimedNukeRenderer.java', """
-          package com.realnukes;
-          import com.mojang.blaze3d.vertex.PoseStack;
-          import net.minecraft.client.Minecraft;
-          import net.minecraft.client.renderer.MultiBufferSource;
-          import net.minecraft.client.renderer.entity.EntityRenderer;
-          import net.minecraft.client.renderer.entity.EntityRendererProvider;
-          import net.minecraft.client.renderer.texture.OverlayTexture;
-          import net.minecraft.client.renderer.texture.TextureAtlas;
-          import net.minecraft.resources.ResourceLocation;
-          import net.minecraft.util.Mth;
-          public class PrimedNukeRenderer extends EntityRenderer<PrimedNukeEntity> {
-            public PrimedNukeRenderer(EntityRendererProvider.Context ctx) {
-              super(ctx);
-              this.shadowRadius = 0.5f;
-            }
-            @Override
-            public void render(PrimedNukeEntity e, float yaw, float pt, PoseStack ps, MultiBufferSource buf, int light) {
-              ps.pushPose();
-              ps.translate(0.0, 0.5, 0.0);
-              int fuse = e.getFuse();
-              if ((float)fuse - pt + 1.0f < 10.0f) {
-                float f = 1.0f - ((float)fuse - pt + 1.0f) / 10.0f;
-                f = Mth.clamp(f, 0.0f, 1.0f);
-                f *= f; f *= f;
-                float sc = 1.0f + f * 0.35f;
-                ps.scale(sc, sc, sc);
-              }
-              ps.translate(-0.5, -0.5, -0.5);
-              float flash = (fuse / 4) % 2 == 0 ? 1.0f : 0.0f;
-              int overlay = OverlayTexture.pack(OverlayTexture.u(flash), OverlayTexture.v(false));
-              Minecraft.getInstance().getBlockRenderer().renderSingleBlock(
-                ModBlocks.getBlockForType(e.getNukeType()).defaultBlockState(), ps, buf, light, overlay
-              );
-              ps.popPose();
-              super.render(e, yaw, pt, ps, buf, light);
-            }
-            @Override
-            public ResourceLocation getTextureLocation(PrimedNukeEntity e) {
-              return TextureAtlas.LOCATION_BLOCKS;
-            }
-          }
-          """)
-
-          w(J + 'FallingMissileRenderer.java', """
-          package com.realnukes;
-          import com.mojang.blaze3d.vertex.PoseStack;
-          import com.mojang.blaze3d.vertex.VertexConsumer;
-          import net.minecraft.client.renderer.LightTexture;
-          import net.minecraft.client.renderer.MultiBufferSource;
-          import net.minecraft.client.renderer.RenderType;
-          import net.minecraft.client.renderer.entity.EntityRenderer;
-          import net.minecraft.client.renderer.entity.EntityRendererProvider;
-          import net.minecraft.client.renderer.texture.OverlayTexture;
-          import net.minecraft.resources.ResourceLocation;
-          import org.joml.Matrix3f;
-          import org.joml.Matrix4f;
-          public class FallingMissileRenderer extends EntityRenderer<FallingMissileEntity> {
-            private static final ResourceLocation MISSILE_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/missile.png");
-            private static final ResourceLocation FIRE_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/fireball_core.png");
-            public FallingMissileRenderer(EntityRendererProvider.Context ctx) {
-              super(ctx);
-            }
-            @Override
-            public void render(FallingMissileEntity e, float yaw, float pt, PoseStack ps, MultiBufferSource buf, int light) {
-              ps.pushPose();
-              VertexConsumer vc = buf.getBuffer(RenderType.entityTranslucent(MISSILE_TEX));
-              drawTube(ps, vc, 0.02f, 0.42f, 0.0f, 0.85f, 12, 1f, 1f, 1f, 1f, light);
-              drawTube(ps, vc, 0.42f, 0.42f, 0.85f, 2.75f, 12, 1f, 1f, 1f, 1f, light);
-              drawTube(ps, vc, 0.42f, 0.56f, 2.4f, 2.95f, 4, 0.85f, 0.85f, 0.9f, 1f, light);
-
-              VertexConsumer fv = buf.getBuffer(RenderType.entityTranslucent(FIRE_TEX));
-              drawTube(ps, fv, 0.34f, 0.04f, 2.85f, 4.9f, 10, 1.0f, 0.78f, 0.25f, 0.92f, LightTexture.FULL_BRIGHT);
-              ps.popPose();
-            }
-            private static void drawTube(PoseStack ps, VertexConsumer vc, float r0, float r1, float y0, float y1, int segs, float r, float g, float b, float a, int light) {
-              PoseStack.Pose pose = ps.last();
-              Matrix4f m = pose.pose();
-              Matrix3f n = pose.normal();
-              for (int i = 0; i < segs; i++) {
-                float a0 = (float)(2.0 * Math.PI * i / segs);
-                float a1 = (float)(2.0 * Math.PI * (i + 1) / segs);
-                float c0 = (float)Math.cos(a0), s0 = (float)Math.sin(a0);
-                float c1 = (float)Math.cos(a1), s1 = (float)Math.sin(a1);
-                float u0 = (float)i / segs, u1 = (float)(i + 1) / segs;
-                vc.vertex(m, c0 * r0, y0, s0 * r0).color(r, g, b, a).uv(u0, 0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, c0, 0f, s0).endVertex();
-                vc.vertex(m, c1 * r0, y0, s1 * r0).color(r, g, b, a).uv(u1, 0f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, c1, 0f, s1).endVertex();
-                vc.vertex(m, c1 * r1, y1, s1 * r1).color(r, g, b, a).uv(u1, 1f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, c1, 0f, s1).endVertex();
-                vc.vertex(m, c0 * r1, y1, s0 * r1).color(r, g, b, a).uv(u0, 1f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, c0, 0f, s0).endVertex();
-              }
-            }
-            @Override
-            public ResourceLocation getTextureLocation(FallingMissileEntity e) {
-              return MISSILE_TEX;
-            }
-          }
-          """)
-
-          w(J + 'MushroomCloudRenderer.java', """
-          package com.realnukes;
-          import com.mojang.blaze3d.vertex.PoseStack;
-          import com.mojang.blaze3d.vertex.VertexConsumer;
-          import com.mojang.math.Axis;
-          import net.minecraft.client.renderer.LightTexture;
-          import net.minecraft.client.renderer.MultiBufferSource;
-          import net.minecraft.client.renderer.RenderType;
-          import net.minecraft.client.renderer.culling.Frustum;
-          import net.minecraft.client.renderer.entity.EntityRenderer;
-          import net.minecraft.client.renderer.entity.EntityRendererProvider;
-          import net.minecraft.client.renderer.texture.OverlayTexture;
-          import net.minecraft.resources.ResourceLocation;
-          import net.minecraft.util.Mth;
-          import org.joml.Matrix3f;
-          import org.joml.Matrix4f;
-
-          public class MushroomCloudRenderer extends EntityRenderer<MushroomCloudEntity> {
-            private static final ResourceLocation CLOUD_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/volumetric_cloud.png");
-            private static final ResourceLocation FIRE_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/fireball_core.png");
-            private static final ResourceLocation RING_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/shockwave_ring.png");
-
-            public MushroomCloudRenderer(EntityRendererProvider.Context ctx) {
-              super(ctx);
-            }
-
-            @Override
-            public boolean shouldRender(MushroomCloudEntity entity, Frustum frustum, double camX, double camY, double camZ) {
-              return entity.distanceToSqr(camX, camY, camZ) < 1024.0 * 1024.0;
-            }
-
-            @Override
-            public void render(MushroomCloudEntity e, float yaw, float pt, PoseStack ps, MultiBufferSource buf, int light) {
-              NukeType t = e.getNukeType();
-              float age = e.getCloudAge() + pt;
-              float life = Mth.clamp(age / (float)t.duration, 0f, 1f);
-              if (life >= 1f) return;
-
-              float fadeOut = life > 0.72f ? 1f - ((life - 0.72f) / 0.28f) : 1f;
-              fadeOut = Mth.clamp(fadeOut, 0f, 1f);
-              float rise = 1f - (float)Math.pow(1f - Mth.clamp(age / (t.duration * 0.30f), 0f, 1f), 2.4);
-              float cool = Mth.clamp(age / (t.duration * 0.45f), 0f, 1f);
-              float scroll = age * 0.015f;
-
-              float curH = t.cloudH * (0.18f + 0.82f * rise);
-              float capR = t.cloudR * (0.28f + 0.72f * rise) * (1f + 0.14f * life);
-              float stemR = capR * 0.24f;
-
-              VertexConsumer fireVc = buf.getBuffer(RenderType.entityTranslucent(FIRE_TEX));
-              VertexConsumer cloudVc = buf.getBuffer(RenderType.entityTranslucent(CLOUD_TEX));
-              VertexConsumer ringVc = buf.getBuffer(RenderType.entityTranslucent(RING_TEX));
-
-              // 1. Bola de fogo incandescente inicial + nucleo termico ascendente
-              float fireAlpha = Mth.clamp((1f - age / (t.duration * 0.28f)) * 0.95f, 0f, 0.95f);
-              if (fireAlpha > 0.02f) {
-                float fbR = t.cloudR * (0.18f + 0.56f * Mth.clamp(age / 38f, 0f, 1f));
-                float fbY = curH * 0.22f + fbR * 0.55f;
-                ps.pushPose();
-                ps.translate(0f, fbY, 0f);
-                ps.mulPose(Axis.YP.rotationDegrees(age * 1.4f));
-                drawSphere(ps, fireVc, fbR * 0.62f, fbR * 0.58f, fbR * 0.62f, 16, 10, 1f, 0.97f, 0.9f, fireAlpha, LightTexture.FULL_BRIGHT, scroll);
-                drawSphere(ps, fireVc, fbR, fbR * 0.92f, fbR, 18, 10, t.fr, t.fg, t.fb, fireAlpha * 0.85f, LightTexture.FULL_BRIGHT, -scroll * 0.7f);
-                ps.popPose();
-              }
-
-              // 2. Domo de choque Mach + onda de choque no solo
-              float shockT = age / 75f;
-              if (shockT < 1.25f) {
-                float shockAlpha = Mth.clamp((1f - shockT / 1.25f) * 0.62f, 0f, 0.62f);
-                float domeR = 4f + age * 3.8f;
-                ps.pushPose();
-                drawDome(ps, ringVc, domeR, domeR * 0.68f, 22, 9, 0.92f, 0.96f, 1.0f, shockAlpha * 0.55f, LightTexture.FULL_BRIGHT, scroll);
-                drawTorus(ps, ringVc, domeR, Math.max(1.2f, domeR * 0.055f), Math.max(0.8f, domeR * 0.03f), 24, 6, 0.95f, 0.97f, 1.0f, shockAlpha * 0.85f, LightTexture.FULL_BRIGHT, scroll);
-                ps.popPose();
-              }
-
-              // 3. Base de poeira (Base Surge)
-              float dustR = t.cloudR * (0.45f + 1.05f * Mth.clamp(age / (t.duration * 0.55f), 0f, 1f));
-              float dustH = Math.max(3.5f, t.cloudR * 0.16f * (0.5f + 0.5f * rise));
-              ps.pushPose();
-              ps.translate(0f, dustH * 0.45f, 0f);
-              ps.mulPose(Axis.YP.rotationDegrees(-age * 0.65f));
-              drawTorus(ps, cloudVc, dustR * 0.68f, dustR * 0.34f, dustH, 20, 8, t.sr * 0.82f, t.sg * 0.80f, t.sb * 0.78f, 0.72f * fadeOut, light, scroll * 0.5f);
-              ps.popPose();
-
-              // 4. Coluna ascendente giratoria (nucleo quente + fumaca externa)
-              ps.pushPose();
-              ps.mulPose(Axis.YP.rotationDegrees(age * 0.95f));
-              float cr = Mth.lerp(cool, t.fr, t.sr);
-              float cg = Mth.lerp(cool, t.fg, t.sg);
-              float cb = Mth.lerp(cool, t.fb, t.sb);
-              drawColumn(ps, cloudVc, stemR * 1.45f, stemR * 0.72f, curH * 0.84f, 16, 10, cr * 0.88f, cg * 0.85f, cb * 0.82f, 0.82f * fadeOut, light, 1.1f, scroll);
-              if (cool < 0.82f) {
-                float coreA = (1f - cool / 0.82f) * 0.75f * fadeOut;
-                drawColumn(ps, fireVc, stemR * 0.75f, stemR * 0.42f, curH * 0.82f, 12, 8, t.fr, t.fg, t.fb, coreA, LightTexture.FULL_BRIGHT, -1.4f, scroll * 1.5f);
-              }
-              ps.popPose();
-
-              // 5. Aneis de condensacao de Wilson
-              if (age > 14f && age < t.duration * 0.68f) {
-                float wFade = Mth.clamp((age - 14f) / 18f, 0f, 1f) * Mth.clamp(1f - (age / (t.duration * 0.68f)), 0f, 1f);
-                for (int i = 0; i < t.wilsonRings; i++) {
-                  float frac = 0.42f + i * 0.17f;
-                  float wy = curH * frac;
-                  float wr = capR * (0.62f + i * 0.24f) * (0.75f + 0.35f * rise);
-                  ps.pushPose();
-                  ps.translate(0f, wy, 0f);
-                  ps.mulPose(Axis.YP.rotationDegrees(age * (0.5f + i * 0.25f)));
-                  drawTorus(ps, ringVc, wr, wr * 0.085f, wr * 0.042f, 22, 6, 0.94f, 0.97f, 1.0f, 0.56f * wFade, LightTexture.FULL_BRIGHT, scroll * 0.4f);
-                  ps.popPose();
-                }
-              }
-
-              // 6. Topo toroidal em 3D em camadas (coroa + toroide + brilho inferior)
-              ps.pushPose();
-              ps.translate(0f, curH * 0.86f, 0f);
-              ps.mulPose(Axis.YP.rotationDegrees(age * 0.55f));
-              float capTubeR = capR * 0.44f;
-              float capTubeY = capR * 0.36f;
-
-              // Camada externa volumetrica toroidal
-              drawTorus(ps, cloudVc, capR * 0.58f, capTubeR, capTubeY, 22, 10, Mth.lerp(cool * 0.85f, t.fr, t.sr), Mth.lerp(cool * 0.85f, t.fg, t.sg), Mth.lerp(cool * 0.85f, t.fb, t.sb), 0.88f * fadeOut, light, scroll * 0.8f);
-
-              // Domo superior do cogumelo
-              ps.pushPose();
-              ps.translate(0f, capTubeY * 0.35f, 0f);
-              drawSphere(ps, cloudVc, capR * 0.88f, capR * 0.42f, capR * 0.88f, 18, 8, t.sr, t.sg, t.sb, 0.84f * fadeOut, light, -scroll * 0.5f);
-              ps.popPose();
-
-              // Brilho incandescente interno na base do cogumelo
-              if (cool < 0.88f) {
-                float glowA = (1f - cool / 0.88f) * 0.82f * fadeOut;
-                ps.pushPose();
-                ps.translate(0f, -capTubeY * 0.18f, 0f);
-                drawTorus(ps, fireVc, capR * 0.48f, capTubeR * 0.65f, capTubeY * 0.52f, 18, 8, t.fr, t.fg, t.fb, glowA, LightTexture.FULL_BRIGHT, scroll * 1.4f);
-                ps.popPose();
-              }
-              ps.popPose();
-            }
-
-            private static void drawSphere(PoseStack ps, VertexConsumer vc, float rx, float ry, float rz, int segs, int stacks, float r, float g, float b, float a, int light, float uvOff) {
-              PoseStack.Pose pose = ps.last();
-              Matrix4f m = pose.pose();
-              Matrix3f n = pose.normal();
-              r = Mth.clamp(r, 0f, 1f); g = Mth.clamp(g, 0f, 1f); b = Mth.clamp(b, 0f, 1f); a = Mth.clamp(a, 0f, 1f);
-              for (int j = 0; j < stacks; j++) {
-                float p0 = (float)(-Math.PI * 0.5 + Math.PI * j / stacks);
-                float p1 = (float)(-Math.PI * 0.5 + Math.PI * (j + 1) / stacks);
-                float cp0 = (float)Math.cos(p0), sp0 = (float)Math.sin(p0);
-                float cp1 = (float)Math.cos(p1), sp1 = (float)Math.sin(p1);
-                float v0 = (float)j / stacks + uvOff, v1 = (float)(j + 1) / stacks + uvOff;
-                for (int i = 0; i < segs; i++) {
-                  float t0 = (float)(2.0 * Math.PI * i / segs);
-                  float t1 = (float)(2.0 * Math.PI * (i + 1) / segs);
-                  float ct0 = (float)Math.cos(t0), st0 = (float)Math.sin(t0);
-                  float ct1 = (float)Math.cos(t1), st1 = (float)Math.sin(t1);
-                  float u0 = (float)i / segs, u1 = (float)(i + 1) / segs;
-                  vc.vertex(m, ct0 * cp0 * rx, sp0 * ry, st0 * cp0 * rz).color(r, g, b, a).uv(u0, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct0 * cp0, sp0, st0 * cp0).endVertex();
-                  vc.vertex(m, ct1 * cp0 * rx, sp0 * ry, st1 * cp0 * rz).color(r, g, b, a).uv(u1, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct1 * cp0, sp0, st1 * cp0).endVertex();
-                  vc.vertex(m, ct1 * cp1 * rx, sp1 * ry, st1 * cp1 * rz).color(r, g, b, a).uv(u1, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct1 * cp1, sp1, st1 * cp1).endVertex();
-                  vc.vertex(m, ct0 * cp1 * rx, sp1 * ry, st0 * cp1 * rz).color(r, g, b, a).uv(u0, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct0 * cp1, sp1, st0 * cp1).endVertex();
-                }
-              }
-            }
-
-            private static void drawDome(PoseStack ps, VertexConsumer vc, float rx, float ry, int segs, int stacks, float r, float g, float b, float a, int light, float uvOff) {
-              PoseStack.Pose pose = ps.last();
-              Matrix4f m = pose.pose();
-              Matrix3f n = pose.normal();
-              r = Mth.clamp(r, 0f, 1f); g = Mth.clamp(g, 0f, 1f); b = Mth.clamp(b, 0f, 1f); a = Mth.clamp(a, 0f, 1f);
-              for (int j = 0; j < stacks; j++) {
-                float p0 = (float)(Math.PI * 0.5 * j / stacks);
-                float p1 = (float)(Math.PI * 0.5 * (j + 1) / stacks);
-                float cp0 = (float)Math.cos(p0), sp0 = (float)Math.sin(p0);
-                float cp1 = (float)Math.cos(p1), sp1 = (float)Math.sin(p1);
-                float v0 = (float)j / stacks + uvOff, v1 = (float)(j + 1) / stacks + uvOff;
-                for (int i = 0; i < segs; i++) {
-                  float t0 = (float)(2.0 * Math.PI * i / segs);
-                  float t1 = (float)(2.0 * Math.PI * (i + 1) / segs);
-                  float ct0 = (float)Math.cos(t0), st0 = (float)Math.sin(t0);
-                  float ct1 = (float)Math.cos(t1), st1 = (float)Math.sin(t1);
-                  float u0 = (float)i / segs, u1 = (float)(i + 1) / segs;
-                  vc.vertex(m, ct0 * cp0 * rx, sp0 * ry, st0 * cp0 * rx).color(r, g, b, a).uv(u0, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct0 * cp0, sp0, st0 * cp0).endVertex();
-                  vc.vertex(m, ct1 * cp0 * rx, sp0 * ry, st1 * cp0 * rx).color(r, g, b, a).uv(u1, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct1 * cp0, sp0, st1 * cp0).endVertex();
-                  vc.vertex(m, ct1 * cp1 * rx, sp1 * ry, st1 * cp1 * rx).color(r, g, b, a).uv(u1, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct1 * cp1, sp1, st1 * cp1).endVertex();
-                  vc.vertex(m, ct0 * cp1 * rx, sp1 * ry, st0 * cp1 * rx).color(r, g, b, a).uv(u0, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, ct0 * cp1, sp1, st0 * cp1).endVertex();
-                }
-              }
-            }
-
-            private static void drawTorus(PoseStack ps, VertexConsumer vc, float majorR, float minorR, float minorY, int segs, int tubeSegs, float r, float g, float b, float a, int light, float uvOff) {
-              PoseStack.Pose pose = ps.last();
-              Matrix4f m = pose.pose();
-              Matrix3f n = pose.normal();
-              r = Mth.clamp(r, 0f, 1f); g = Mth.clamp(g, 0f, 1f); b = Mth.clamp(b, 0f, 1f); a = Mth.clamp(a, 0f, 1f);
-              for (int i = 0; i < segs; i++) {
-                float u0 = (float)(2.0 * Math.PI * i / segs);
-                float u1 = (float)(2.0 * Math.PI * (i + 1) / segs);
-                float cu0 = (float)Math.cos(u0), su0 = (float)Math.sin(u0);
-                float cu1 = (float)Math.cos(u1), su1 = (float)Math.sin(u1);
-                float tu0 = (float)i / segs, tu1 = (float)(i + 1) / segs;
-                for (int j = 0; j < tubeSegs; j++) {
-                  float v0 = (float)(2.0 * Math.PI * j / tubeSegs);
-                  float v1 = (float)(2.0 * Math.PI * (j + 1) / tubeSegs);
-                  float cv0 = (float)Math.cos(v0), sv0 = (float)Math.sin(v0);
-                  float cv1 = (float)Math.cos(v1), sv1 = (float)Math.sin(v1);
-                  float tv0 = (float)j / tubeSegs + uvOff, tv1 = (float)(j + 1) / tubeSegs + uvOff;
-                  float rr0 = majorR + minorR * cv0;
-                  float rr1 = majorR + minorR * cv1;
-                  vc.vertex(m, rr0 * cu0, sv0 * minorY, rr0 * su0).color(r, g, b, a).uv(tu0, tv0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, cv0 * cu0, sv0, cv0 * su0).endVertex();
-                  vc.vertex(m, rr0 * cu1, sv0 * minorY, rr0 * su1).color(r, g, b, a).uv(tu1, tv0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, cv0 * cu1, sv0, cv0 * su1).endVertex();
-                  vc.vertex(m, rr1 * cu1, sv1 * minorY, rr1 * su1).color(r, g, b, a).uv(tu1, tv1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, cv1 * cu1, sv1, cv1 * su1).endVertex();
-                  vc.vertex(m, rr1 * cu0, sv1 * minorY, rr1 * su0).color(r, g, b, a).uv(tu0, tv1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, cv1 * cu0, sv1, cv1 * su0).endVertex();
-                }
-              }
-            }
-
-            private static void drawColumn(PoseStack ps, VertexConsumer vc, float botR, float topR, float h, int segs, int stacks, float r, float g, float b, float a, int light, float twist, float uvOff) {
-              PoseStack.Pose pose = ps.last();
-              Matrix4f m = pose.pose();
-              Matrix3f n = pose.normal();
-              r = Mth.clamp(r, 0f, 1f); g = Mth.clamp(g, 0f, 1f); b = Mth.clamp(b, 0f, 1f); a = Mth.clamp(a, 0f, 1f);
-              for (int j = 0; j < stacks; j++) {
-                float f0 = (float)j / stacks;
-                float f1 = (float)(j + 1) / stacks;
-                float y0 = f0 * h, y1 = f1 * h;
-                float r0 = Mth.lerp(f0, botR, topR) * (1f + 0.12f * (float)Math.sin(f0 * Math.PI * 3.0));
-                float r1 = Mth.lerp(f1, botR, topR) * (1f + 0.12f * (float)Math.sin(f1 * Math.PI * 3.0));
-                float tw0 = f0 * twist, tw1 = f1 * twist;
-                float v0 = f0 * 2f - uvOff, v1 = f1 * 2f - uvOff;
-                for (int i = 0; i < segs; i++) {
-                  float a00 = (float)(2.0 * Math.PI * i / segs) + tw0;
-                  float a10 = (float)(2.0 * Math.PI * (i + 1) / segs) + tw0;
-                  float a01 = (float)(2.0 * Math.PI * i / segs) + tw1;
-                  float a11 = (float)(2.0 * Math.PI * (i + 1) / segs) + tw1;
-                  float u0 = (float)i / segs, u1 = (float)(i + 1) / segs;
-                  vc.vertex(m, (float)Math.cos(a00) * r0, y0, (float)Math.sin(a00) * r0).color(r, g, b, a).uv(u0, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, (float)Math.cos(a00), 0f, (float)Math.sin(a00)).endVertex();
-                  vc.vertex(m, (float)Math.cos(a10) * r0, y0, (float)Math.sin(a10) * r0).color(r, g, b, a).uv(u1, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, (float)Math.cos(a10), 0f, (float)Math.sin(a10)).endVertex();
-                  vc.vertex(m, (float)Math.cos(a11) * r1, y1, (float)Math.sin(a11) * r1).color(r, g, b, a).uv(u1, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, (float)Math.cos(a11), 0f, (float)Math.sin(a11)).endVertex();
-                  vc.vertex(m, (float)Math.cos(a01) * r1, y1, (float)Math.sin(a01) * r1).color(r, g, b, a).uv(u0, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(light).normal(n, (float)Math.cos(a01), 0f, (float)Math.sin(a01)).endVertex();
-                }
-              }
-            }
-
-            @Override
-            public ResourceLocation getTextureLocation(MushroomCloudEntity e) {
-              return CLOUD_TEX;
-            }
-          }
-          """)
-
+          # --- ClientModEvents.java ---
           w(J + 'ClientModEvents.java', """
           package com.realnukes;
           import net.minecraft.client.renderer.entity.ThrownItemRenderer;
@@ -2003,23 +1549,26 @@ jobs:
           import net.minecraftforge.client.event.EntityRenderersEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
           import net.minecraftforge.fml.common.Mod;
+
           @Mod.EventBusSubscriber(modid = RealNukesMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
           public class ClientModEvents {
             @SubscribeEvent
-            public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
-              event.registerEntityRenderer(ModEntities.PRIMED_NUKE.get(), PrimedNukeRenderer::new);
-              event.registerEntityRenderer(ModEntities.MINI_NUKE_GRENADE.get(), ThrownItemRenderer::new);
-              event.registerEntityRenderer(ModEntities.FALLING_MISSILE.get(), FallingMissileRenderer::new);
-              event.registerEntityRenderer(ModEntities.MUSHROOM_CLOUD.get(), MushroomCloudRenderer::new);
+            public static void reg(EntityRenderersEvent.RegisterRenderers ev) {
+              ev.registerEntityRenderer(RealNukesMod.NUCLEAR_CLOUD.get(), NuclearCloudRenderer::new);
+              ev.registerEntityRenderer(RealNukesMod.PRIMED_NUKE.get(), NuclearCloudRenderer.PrimedRenderer::new);
+              ev.registerEntityRenderer(RealNukesMod.MINI_GRENADE_ENT.get(), ThrownItemRenderer::new);
+              ev.registerEntityRenderer(RealNukesMod.FALLING_MISSILE.get(), NuclearCloudRenderer.MissileRenderer::new);
             }
           }
           """)
+
+          print('REALNUKES CINEMATIC GERADO COM SUCESSO!')
           PYEOF
 
-      - name: Compilar .jar Forge 1.20.1
-        run: gradle build --no-daemon
+      - name: Compilar JAR
+        run: gradle build --no-daemon --stacktrace
 
-      - name: Enviar .jar Pronto
+      - name: Disponibilizar Mod
         uses: actions/upload-artifact@v4
         with:
           name: RealNukes-1.20.1-Forge-MOD
