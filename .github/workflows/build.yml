@@ -1,4 +1,4 @@
-name: Compilar RealNukes Volumetrico 1.20.1
+name: Compilar RealNukes Ultra Mobile 1.20.1
 
 on:
   workflow_dispatch: {}
@@ -19,7 +19,7 @@ jobs:
         with:
           gradle-version: '8.8'
 
-      - name: Gerar Mod RealNukes Volumetrico GLSL
+      - name: Gerar Mod RealNukes Ultra Mobile 3.0.0
         run: |
           python3 - << 'PYEOF'
           import os, zlib, struct, math, json
@@ -55,6 +55,9 @@ jobs:
           def h2(x, y, s):
             return abs(math.sin(x * 127.1 + y * 311.7 + s * 74.7) * 43758.5453) % 1.0
 
+          def h3(x, y, z, s):
+            return abs(math.sin(x * 127.1 + y * 311.7 + z * 74.7 + s * 19.19) * 43758.5453) % 1.0
+
           def vn(x, y, per, s):
             ix, iy = int(math.floor(x)), int(math.floor(y))
             fx, fy = x - ix, y - iy
@@ -70,6 +73,78 @@ jobs:
               per *= 2
               amp *= 0.5
             return v
+
+          # --- TEXTURA 3D VOLUMETRICA WORLEY-PERLIN (32x32x32 em 256x128) ---
+          def make_vol3d(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            N = 32
+            def pts(G, sd):
+              return [[[(x + h3(x, y, z, sd), y + h3(x, y, z, sd + 7), z + h3(x, y, z, sd + 13)) for z in range(G)] for y in range(G)] for x in range(G)]
+            p4 = pts(4, 1.0)
+            p8 = pts(8, 5.0)
+            v4 = [[[h3(x, y, z, 21.0) for z in range(4)] for y in range(4)] for x in range(4)]
+            v8 = [[[h3(x, y, z, 33.0) for z in range(8)] for y in range(8)] for x in range(8)]
+
+            def worley(x, y, z, G, P):
+              px, py, pz = x * G / N, y * G / N, z * G / N
+              cx, cy, cz = int(px), int(py), int(pz)
+              md = 9.0
+              for dx in (-1, 0, 1):
+                nx = (cx + dx) % G
+                for dy in (-1, 0, 1):
+                  ny = (cy + dy) % G
+                  for dz in (-1, 0, 1):
+                    nz = (cz + dz) % G
+                    fx, fy, fz = P[nx][ny][nz]
+                    ox = fx - px + (cx + dx - nx)
+                    oy = fy - py + (cy + dy - ny)
+                    oz = fz - pz + (cz + dz - nz)
+                    d2 = ox * ox + oy * oy + oz * oz
+                    if d2 < md:
+                      md = d2
+              return max(0.0, 1.0 - math.sqrt(md) * 1.08)
+
+            def vtril(x, y, z, G, V):
+              px, py, pz = x * G / N, y * G / N, z * G / N
+              ix, iy, iz = int(px), int(py), int(pz)
+              fx, fy, fz = px - ix, py - iy, pz - iz
+              ux = fx * fx * (3.0 - 2.0 * fx)
+              uy = fy * fy * (3.0 - 2.0 * fy)
+              uz = fz * fz * (3.0 - 2.0 * fz)
+              i1, j1, k1 = (ix + 1) % G, (iy + 1) % G, (iz + 1) % G
+              a = V[ix][iy][iz] * (1.0 - ux) + V[i1][iy][iz] * ux
+              b = V[ix][j1][iz] * (1.0 - ux) + V[i1][j1][iz] * ux
+              c = V[ix][iy][k1] * (1.0 - ux) + V[i1][iy][k1] * ux
+              d = V[ix][j1][k1] * (1.0 - ux) + V[i1][j1][k1] * ux
+              return (a * (1.0 - uy) + b * uy) * (1.0 - uz) + (c * (1.0 - uy) + d * uy) * uz
+
+            W, H = 256, 128
+            raw = bytearray()
+            for py in range(H):
+              raw.append(0)
+              sy = py // N
+              y = py % N
+              for px in range(W):
+                sx = px // N
+                x = px % N
+                z = sy * 8 + sx
+                r = vtril(x, y, z, 4, v4) * 0.65 + vtril(x, y, z, 8, v8) * 0.35
+                w1 = worley(x, y, z, 4, p4)
+                w2 = worley(x, y, z, 8, p8)
+                g = w1 * 0.72 + w2 * 0.28
+                b = w2 * 0.75 + r * 0.25
+                a = max(0.0, min(1.0, (1.0 - w1) * 0.7 + (1.0 - w2) * 0.3))
+                raw.extend((
+                  max(0, min(255, int(r * 255))),
+                  max(0, min(255, int(g * 255))),
+                  max(0, min(255, int(b * 255))),
+                  max(0, min(255, int(a * 255)))
+                ))
+            ck = lambda t, b: struct.pack('>I', len(b)) + t + b + struct.pack('>I', zlib.crc32(t + b) & 0xffffffff)
+            sig = bytes([137, 80, 78, 71, 13, 10, 26, 10])
+            ih = struct.pack('>IIBBBBB', W, H, 8, 6, 0, 0, 0)
+            with open(path, 'wb') as f:
+              f.write(sig + ck(b'IHDR', ih) + ck(b'IDAT', zlib.compress(bytes(raw), 6)) + ck(b'IEND', b''))
 
           # --- GRADLE & METADATA ---
           w('settings.gradle', """
@@ -93,9 +168,9 @@ jobs:
             id 'eclipse'
             id 'net.minecraftforge.gradle' version '[6.0,6.2)'
           }
-          version = '2.0.0'
+          version = '3.0.0'
           group = 'com.realnukes'
-          base { archivesName = 'realnukes-volumetric-1.20.1' }
+          base { archivesName = 'realnukes-cinema-mobile-1.20.1' }
           java.toolchain.languageVersion = JavaLanguageVersion.of(17)
           minecraft {
             mappings channel: 'official', version: '1.20.1'
@@ -109,16 +184,16 @@ jobs:
             manifest {
               attributes([
                 'Specification-Title': 'realnukes',
-                'Specification-Version': '2',
+                'Specification-Version': '3',
                 'Implementation-Title': 'realnukes',
-                'Implementation-Version': '2.0.0'
+                'Implementation-Version': '3.0.0'
               ])
             }
             finalizedBy 'reobfJar'
           }
           """)
 
-          w('src/main/resources/pack.mcmeta', '{"pack":{"description":"RealNukes Volumetric","pack_format":15}}\n')
+          w('src/main/resources/pack.mcmeta', '{"pack":{"description":"RealNukes Cinema Mobile","pack_format":15}}\n')
 
           w('src/main/resources/META-INF/mods.toml', """
           modLoader="javafml"
@@ -126,9 +201,9 @@ jobs:
           license="MIT"
           [[mods]]
           modId="realnukes"
-          version="2.0.0"
-          displayName="RealNukes Volumetric Cinema"
-          description="True GLSL 3D raymarched volumetric nuclear mushroom clouds."
+          version="3.0.0"
+          displayName="RealNukes Ultra Cinema"
+          description="Ultra-optimized photorealistic 3D Worley-Perlin raymarched nuclear clouds."
           [[dependencies.realnukes]]
           modId="forge"
           mandatory=true
@@ -144,8 +219,9 @@ jobs:
           """)
 
           A = 'src/main/resources/assets/realnukes/'
+          make_vol3d(A + 'textures/entity/noise_vol.png')
 
-          # --- SHADERS GLSL 3D VOLUMETRICOS ---
+          # --- SHADERS GLSL 3D ULTRA MOBILE ---
           w(A + 'shaders/core/volumetric_nuke.json', """
           {
             "blend": {
@@ -156,17 +232,17 @@ jobs:
             "vertex": "realnukes:volumetric_nuke",
             "fragment": "realnukes:volumetric_nuke",
             "attributes": ["Position"],
-            "samplers": [],
+            "samplers": [{"name": "Sampler0"}],
             "uniforms": [
               {"name": "ModelViewMat", "type": "matrix4x4", "count": 16, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]},
               {"name": "ProjMat", "type": "matrix4x4", "count": 16, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]},
               {"name": "LocalMV", "type": "matrix4x4", "count": 16, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]},
               {"name": "CamPos", "type": "float", "count": 3, "values": [0.0, 0.0, 0.0]},
               {"name": "BoxMin", "type": "float", "count": 3, "values": [-100.0, -5.0, -100.0]},
-              {"name": "BoxMax", "type": "float", "count": 3, "values": [100.0, 200.0, 100.0]},
+              {"name": "BoxMax", "type": "float", "count": 3, "values": [100.0, 220.0, 100.0]},
               {"name": "CloudParams", "type": "float", "count": 4, "values": [10.0, 120.0, 60.0, 900.0]},
-              {"name": "FireCol", "type": "float", "count": 3, "values": [1.0, 0.5, 0.12]},
-              {"name": "SmokeCol", "type": "float", "count": 3, "values": [0.88, 0.84, 0.80]},
+              {"name": "FireCol", "type": "float", "count": 3, "values": [1.0, 0.46, 0.09]},
+              {"name": "SmokeCol", "type": "float", "count": 3, "values": [0.92, 0.88, 0.84]},
               {"name": "ExtraParams", "type": "float", "count": 4, "values": [2.0, 0.0, 1.0, 1.0]}
             ]
           }
@@ -187,6 +263,7 @@ jobs:
           w(A + 'shaders/core/volumetric_nuke.fsh', """
           #version 150
           in vec3 vLocalPos;
+          uniform sampler2D Sampler0;
           uniform vec3 CamPos;
           uniform vec3 BoxMin;
           uniform vec3 BoxMax;
@@ -196,43 +273,18 @@ jobs:
           uniform vec4 ExtraParams;
           out vec4 fragColor;
 
-          float h31(vec3 p) {
-            p = fract(p * 0.1031);
-            p += dot(p, p.yzx + 33.33);
-            return fract((p.x + p.y) * p.z);
-          }
-
-          float n3(vec3 p) {
-            vec3 i = floor(p);
-            vec3 f = fract(p);
-            f = f * f * (3.0 - 2.0 * f);
-            float a = mix(h31(i), h31(i + vec3(1.0, 0.0, 0.0)), f.x);
-            float b = mix(h31(i + vec3(0.0, 1.0, 0.0)), h31(i + vec3(1.0, 1.0, 0.0)), f.x);
-            float c = mix(h31(i + vec3(0.0, 0.0, 1.0)), h31(i + vec3(1.0, 0.0, 1.0)), f.x);
-            float d = mix(h31(i + vec3(0.0, 1.0, 1.0)), h31(i + vec3(1.0, 1.0, 1.0)), f.x);
-            return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
-          }
-
-          const mat3 M3 = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
-
-          float billow4(vec3 p) {
-            float v = 0.0;
-            float a = 0.52;
-            for (int i = 0; i < 4; i++) {
-              float n = n3(p);
-              float b = 1.0 - abs(n * 2.0 - 1.0);
-              v += a * b * b;
-              p = M3 * p * 2.07 + vec3(13.1, 7.7, 19.3);
-              a *= 0.48;
-            }
-            return v;
-          }
-
-          float billow2(vec3 p) {
-            float n1 = 1.0 - abs(n3(p) * 2.0 - 1.0);
-            p = M3 * p * 2.05 + vec3(13.1, 7.7, 19.3);
-            float n2 = 1.0 - abs(n3(p) * 2.0 - 1.0);
-            return 0.65 * n1 * n1 + 0.35 * n2 * n2;
+          vec4 vol3D(vec3 p) {
+            vec3 fp = fract(p);
+            float zf = fp.z * 32.0;
+            float z0 = mod(floor(zf), 32.0);
+            float z1 = mod(z0 + 1.0, 32.0);
+            float fz = fract(zf);
+            vec2 uv = (vec2(0.5) + fp.xy * 31.0) / 32.0;
+            vec2 s0 = vec2(mod(z0, 8.0), floor(z0 * 0.125));
+            vec2 s1 = vec2(mod(z1, 8.0), floor(z1 * 0.125));
+            vec4 c0 = texture(Sampler0, (s0 + uv) * vec2(0.125, 0.25));
+            vec4 c1 = texture(Sampler0, (s1 + uv) * vec2(0.125, 0.25));
+            return mix(c0, c1, fz);
           }
 
           float smin(float a, float b, float k) {
@@ -250,98 +302,118 @@ jobs:
             return vec2(max(max(tn.x, tn.y), max(tn.z, 0.0)), min(min(tf.x, tf.y), tf.z));
           }
 
-          vec3 blackbody(float temp) {
-            vec3 c1 = vec3(0.95, 0.10, 0.01);
-            vec3 c2 = vec3(1.00, 0.44, 0.05);
-            vec3 c3 = vec3(1.00, 0.88, 0.40);
-            vec3 c4 = vec3(1.00, 0.99, 0.96);
-            vec3 c = mix(vec3(0.0), c1, smoothstep(0.06, 0.28, temp));
-            c = mix(c, c2, smoothstep(0.26, 0.56, temp));
-            c = mix(c, c3, smoothstep(0.54, 0.84, temp));
-            c = mix(c, c4, smoothstep(0.80, 1.15, temp));
-            return c;
+          vec3 blackbody(float x) {
+            vec3 c1 = vec3(0.90, 0.08, 0.01);
+            vec3 c2 = vec3(1.00, 0.40, 0.04);
+            vec3 c3 = vec3(1.00, 0.86, 0.34);
+            vec3 c4 = vec3(1.00, 0.99, 0.95);
+            vec3 c = mix(vec3(0.0), c1, smoothstep(0.05, 0.26, x));
+            c = mix(c, c2, smoothstep(0.24, 0.52, x));
+            c = mix(c, c3, smoothstep(0.50, 0.80, x));
+            return mix(c, c4, smoothstep(0.78, 1.12, x));
           }
 
           vec3 aces(vec3 x) {
             return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
           }
 
-          float hgPhase(float cosT, float g) {
-            float g2 = g * g;
-            return (1.0 - g2) / (4.0 * 3.14159 * pow(max(1.0 + g2 - 2.0 * g * cosT, 0.001), 1.5));
-          }
-
-          vec3 evalField(vec3 p, float t, float H, float R, float prog, float rings, bool hi) {
+          vec4 analyticShape(vec3 p, float t, float H, float R, float prog, float fbY, float fbR) {
             float rXZ = length(p.xz);
-            float ang = atan(p.z, p.x + 1e-5);
-            float capFlat = mix(0.64, 0.38, smoothstep(0.22, 0.88, prog));
-            float torMaj = R * 0.54;
+            float capFlat = mix(0.62, 0.36, smoothstep(0.24, 0.90, prog));
+            float torMaj = R * 0.58;
             vec2 tc = vec2(rXZ - torMaj, (p.y - H) / max(capFlat, 0.2));
-            float torD = length(tc);
-            float torA = atan(tc.y, tc.x + 1e-5);
-            float roll = torA + t * 0.044;
-            vec3 capAdv = vec3(cos(ang) * (torMaj + torD * cos(roll)), H + torD * sin(roll), sin(ang) * (torMaj + torD * cos(roll)));
-            float freq = 2.45 / max(R, 8.0);
-            float bCap = hi ? billow4(capAdv * freq + vec3(0.0, -t * 0.025, ExtraParams.w)) : billow2(capAdv * freq + vec3(0.0, -t * 0.025, ExtraParams.w));
-            float dTor = torD - R * 0.44;
-            float dDome = length(vec3(p.x, (p.y - (H + R * 0.14)) * 1.22, p.z)) - R * 0.66;
-            float dAnvil = length(vec3(p.x * 0.72, (p.y - (H + R * 0.24)) * 2.8, p.z * 0.72)) - R * (0.55 + prog * 0.55);
-            float dCap = smin(dTor, dDome, R * 0.24);
-            if (prog > 0.28) dCap = smin(dCap, dAnvil, R * 0.22);
-            float dispCap = (bCap - 0.44) * R * 0.52;
-            float sdfCap = dCap - dispCap;
+            float dTor = length(tc) - R * 0.44;
+            float dCrown = length(vec3(p.x, (p.y - (H + R * 0.18)) * 1.28, p.z)) - R * 0.66;
+            float dAnvil = length(vec3(p.x * 0.66, (p.y - (H + R * 0.24)) * 2.9, p.z * 0.66)) - R * (0.52 + prog * 0.62);
+            float dCap = smin(dTor, dCrown, R * 0.22);
+            if (prog > 0.28) dCap = smin(dCap, dAnvil, R * 0.20);
 
             float hN = clamp(p.y / max(H, 1.0), 0.0, 1.0);
-            float stemProf = R * (0.175 - 0.045 * sin(hN * 3.14159) + 0.22 * pow(max(1.0 - hN * 4.2, 0.0), 2.0) + 0.24 * pow(max((hN - 0.72) / 0.28, 0.0), 2.0));
-            float dStem = max(rXZ - stemProf, max(-p.y, p.y - H * 1.02));
-            vec3 stemP = vec3(p.x * cos(hN * 1.8) - p.z * sin(hN * 1.8), p.y - t * 1.15, p.x * sin(hN * 1.8) + p.z * cos(hN * 1.8));
-            float bStem = hi ? billow4(stemP * (freq * 1.65)) : billow2(stemP * (freq * 1.65));
-            float sdfStem = dStem - (bStem - 0.42) * R * 0.24;
+            float stemR = R * (0.165 - 0.04 * sin(hN * 3.14159) + 0.24 * pow(max(1.0 - hN * 4.0, 0.0), 2.0) + 0.25 * pow(max((hN - 0.70) / 0.30, 0.0), 2.0));
+            float dStem = max(rXZ - stemR, max(-p.y, p.y - H * 1.02));
+            float collar = length(vec2(rXZ - stemR * 1.45, (p.y - H * 0.48) * 2.5)) - R * 0.11;
+            dStem = smin(dStem, collar, R * 0.09);
 
-            float baseR = R * (0.56 + prog * 1.12);
-            float dBase = length(vec2(rXZ - baseR, (p.y - R * 0.07) * 2.2)) - R * 0.24;
-            vec3 baseP = vec3(p.x * (1.0 - prog * 0.25), p.y - t * 0.22, p.z * (1.0 - prog * 0.25));
-            float bBase = hi ? billow4(baseP * (freq * 1.45)) : billow2(baseP * (freq * 1.45));
-            float sdfBase = dBase - (bBase - 0.44) * R * 0.26;
+            float baseR = R * (0.58 + prog * 1.18);
+            float dBase = length(vec2(rXZ - baseR, (p.y - R * 0.06) * 2.4)) - R * 0.24;
 
-            float sdf = smin(sdfCap, sdfStem, R * 0.18);
-            sdf = smin(sdf, sdfBase, R * 0.16);
+            float dAll = smin(dCap, dStem, R * 0.17);
+            dAll = smin(dAll, dBase, R * 0.15);
+            if (t < 110.0) {
+              float dFb = length(p - vec3(0.0, fbY, 0.0)) - fbR;
+              dAll = smin(dAll, dFb, R * 0.18 * exp(-t * 0.022) + 0.01);
+            }
 
-            float fbY = mix(H * 0.26, H * 0.95, min(1.0, t / 68.0));
-            float fbR = R * mix(0.62, 0.48, min(1.0, t / 90.0));
-            float dFb = length(p - vec3(0.0, fbY, 0.0)) - fbR;
-            float early = exp(-t * 0.022);
-            sdf = smin(sdf, dFb - (bCap - 0.4) * R * 0.28, R * 0.20 * early + 0.01);
+            float wCap = clamp(1.0 - dCap / (R * 0.35), 0.0, 1.0);
+            float wStem = clamp(1.0 - dStem / (R * 0.25), 0.0, 1.0);
+            float wBase = clamp(1.0 - dBase / (R * 0.25), 0.0, 1.0);
+            return vec4(dAll, wCap, wStem, wBase);
+          }
 
-            float dens = clamp(-sdf / (R * 0.14), 0.0, 1.0);
-            dens = pow(max(dens, 0.0001), 0.72) * step(0.001, dens);
+          vec4 sampleCloud(vec3 p, float t, float H, float R, float prog, float rings, float fbY, float fbR, bool detail) {
+            vec4 sh = analyticShape(p, t, H, R, prog, fbY, fbR);
+            float d = sh.x;
+            float rXZ = length(p.xz);
 
-            float wilson = 0.0;
-            if (t > 10.0 && t < 280.0) {
-              float wf = smoothstep(10.0, 26.0, t) * (1.0 - smoothstep(170.0, 280.0, t));
+            float wil = 0.0;
+            if (t > 8.0 && t < 280.0 && p.y > H * 0.22 && p.y < H * 0.86) {
+              float wf = smoothstep(8.0, 22.0, t) * (1.0 - smoothstep(170.0, 280.0, t));
               for (int w = 0; w < 3; w++) {
                 if (float(w) < rings) {
-                  float wy = H * (0.35 + float(w) * 0.20);
-                  float wr = R * (0.62 + float(w) * 0.25) * (0.72 + t * 0.0024);
+                  float wy = H * (0.34 + float(w) * 0.20);
                   float dy = abs(p.y - wy);
-                  float dr = abs(rXZ - wr);
-                  if (dy < R * 0.12 && dr < R * 0.32) {
-                    float wn = hi ? billow2(vec3(p.x, p.y * 2.0, p.z) * freq * 1.8) : 0.5;
-                    float ringD = exp(-dy * dy / (R * R * 0.0025)) * exp(-dr * dr / (R * R * 0.032)) * (0.45 + 0.55 * wn);
-                    wilson += ringD * wf * 0.55;
+                  if (dy < R * 0.08) {
+                    float wr = R * (0.64 + float(w) * 0.26) * (0.74 + t * 0.0024);
+                    float dr = abs(rXZ - wr);
+                    if (dr < R * 0.36) {
+                      float ring = exp(-dy * dy / (R * R * 0.0014)) * exp(-dr * dr / (R * R * 0.036));
+                      wil += ring * wf * 0.75;
+                    }
                   }
                 }
               }
             }
 
-            float coreCool = exp(-t * 0.015);
-            float embCool = exp(-t * 0.0046);
-            float fbProx = clamp(1.0 - length(p - vec3(0.0, fbY, 0.0)) / (fbR * 1.35), 0.0, 1.0);
-            float capUnder = clamp(1.0 - abs(p.y - (H - R * 0.12)) / (R * 0.58), 0.0, 1.0) * clamp(1.0 - rXZ / (R * 0.95), 0.0, 1.0);
-            float crevice = clamp(1.0 - bCap * 1.25, 0.0, 1.0);
-            float stemGlow = clamp(1.0 - rXZ / (stemProf * 1.1), 0.0, 1.0) * clamp(1.0 - abs(hN - 0.75) * 1.8, 0.0, 1.0) * 0.65;
-            float fireTemp = (fbProx * 1.45 * coreCool) + (capUnder * (0.55 + 1.15 * crevice) * embCool) + (stemGlow * embCool * 0.85) + (crevice * 0.55 * coreCool);
-            return vec3(dens, fireTemp, wilson);
+            if (d > R * 0.34) return vec4(0.0, 0.0, wil, d);
+
+            float sc = 0.58 / max(R, 8.0);
+            vec3 q = p * sc;
+            if (sh.y > sh.z && sh.y > sh.w) {
+              float ang = atan(p.z, p.x + 1e-5);
+              float torMaj = R * 0.58;
+              vec2 tc = vec2(rXZ - torMaj, p.y - H);
+              float td = length(tc);
+              float ta = atan(tc.y, tc.x + 1e-5) + t * 0.048;
+              q = vec3(cos(ang) * (torMaj + td * cos(ta)), H + td * sin(ta), sin(ang) * (torMaj + td * cos(ta))) * sc + vec3(0.0, -t * 0.006, ExtraParams.w);
+            } else if (sh.z >= sh.w) {
+              float tw = (p.y / max(H, 1.0)) * 2.2;
+              q = vec3(p.x * cos(tw) - p.z * sin(tw), (p.y - t * 1.25) * 0.48, p.x * sin(tw) + p.z * cos(tw)) * sc * 1.55;
+            } else {
+              q = vec3(p.x * (1.0 - prog * 0.28), p.y * 1.2 - t * 0.25, p.z * (1.0 - prog * 0.28)) * sc * 1.35;
+            }
+
+            vec4 v = vol3D(q);
+            float cauli = v.g * 0.64 + v.b * 0.26 + v.r * 0.10;
+            if (detail) {
+              vec4 v2 = vol3D(q * 2.35 + vec3(0.17, -t * 0.015, 0.41));
+              cauli = cauli * 0.76 + v2.g * 0.24;
+            }
+            float disp = (cauli - 0.38) * R * 0.56;
+            float sdf = d - disp;
+            float dens = clamp(-sdf / (R * 0.085), 0.0, 1.0);
+            dens = dens * dens * (3.0 - 2.0 * dens);
+
+            float fire = 0.0;
+            if (detail && dens > 0.01) {
+              float cCool = exp(-t * 0.014);
+              float eCool = exp(-t * 0.0044);
+              float fbProx = clamp(1.0 - length(p - vec3(0.0, fbY, 0.0)) / (fbR * 1.38), 0.0, 1.0);
+              float under = clamp(1.0 - abs(p.y - (H - R * 0.10)) / (R * 0.55), 0.0, 1.0) * clamp(1.0 - rXZ / (R * 0.95), 0.0, 1.0);
+              float crack = pow(max(v.a, 0.001), 1.85);
+              float stemCore = sh.z * clamp(1.0 - rXZ / (R * 0.24), 0.0, 1.0) * 0.75;
+              fire = (fbProx * (0.9 + 0.95 * crack) * cCool) + (under * (0.35 + 1.35 * crack) * eCool) + (stemCore * eCool * 0.85);
+            }
+            return vec4(dens, fire, wil, sdf);
           }
 
           void main() {
@@ -356,16 +428,18 @@ jobs:
             float dur = CloudParams.w;
             float prog = clamp(t / dur, 0.0, 1.0);
             float fade = prog > 0.78 ? clamp((1.0 - prog) / 0.22, 0.0, 1.0) : 1.0;
-            float rise = 1.0 - pow(max(1.0 - min(1.0, t / (dur * 0.32)), 0.0001), 3.2);
+            float rise = 1.0 - pow(max(1.0 - min(1.0, t / (dur * 0.31)), 0.0001), 3.2);
             float H = Hmax * (0.06 + 0.94 * rise);
-            float R = Rmax * (0.22 + 0.78 * pow(max(min(1.0, t / (dur * 0.38)), 0.0001), 0.55)) + (prog > 0.32 ? (prog - 0.32) * Rmax * 0.72 : 0.0);
+            float R = Rmax * (0.22 + 0.78 * pow(max(min(1.0, t / (dur * 0.37)), 0.0001), 0.54)) + (prog > 0.30 ? (prog - 0.30) * Rmax * 0.76 : 0.0);
+            float fbY = mix(H * 0.25, H * 0.96, min(1.0, t / 66.0));
+            float fbR = R * mix(0.62, 0.46, min(1.0, t / 90.0));
             float rings = ExtraParams.x;
             float isExotic = ExtraParams.y;
             float sunBr = ExtraParams.z;
 
-            vec3 sunDir = normalize(vec3(0.58, 0.74, 0.34));
-            float cosTheta = dot(rd, sunDir);
-            float phase = mix(hgPhase(cosTheta, 0.58), hgPhase(cosTheta, -0.25), 0.32) * 2.6;
+            vec3 sunDir = normalize(vec3(0.60, 0.72, 0.34));
+            float cosT = dot(rd, sunDir);
+            float hg = 0.42 + 0.95 * pow(max(0.5 + 0.5 * cosT, 0.001), 3.2);
 
             float tStart = hit.x;
             float tEnd = hit.y;
@@ -374,84 +448,88 @@ jobs:
               if (tg > tStart && tg < tEnd) tEnd = tg;
             }
 
-            float distSpan = max(tEnd - tStart, 0.01);
-            int STEPS = 54;
-            float stepLen = distSpan / float(STEPS);
-            float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+            float span = max(tEnd - tStart, 0.01);
+            float baseStep = span / 34.0;
+            float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 
             vec3 accum = vec3(0.0);
             float trans = 1.0;
 
             if (t < 75.0) {
-              float sR = t * 4.8;
+              float sR = t * 4.9;
               float bS = dot(ro, rd);
               float cS = dot(ro, ro) - sR * sR;
               float disc = bS * bS - cS;
               if (disc > 0.0) {
                 float sq = sqrt(disc);
-                float ts = (-bS + sq > 0.0) ? (-bS - sq > 0.0 ? -bS - sq : -bS + sq) : -1.0;
+                float ts = (-bS - sq > 0.0) ? (-bS - sq) : (-bS + sq);
                 if (ts > 0.0 && ts < tEnd) {
                   vec3 sp = ro + rd * ts;
                   if (sp.y > -1.0) {
                     vec3 sn = normalize(sp);
-                    float fres = pow(max(1.0 - abs(dot(sn, rd)), 0.0001), 2.3);
-                    float sa = fres * (1.0 - t / 75.0) * 0.78;
-                    accum += trans * vec3(0.95, 0.97, 1.0) * sa * 1.35;
+                    float fr = pow(max(1.0 - abs(dot(sn, rd)), 0.0001), 2.5);
+                    float sa = fr * (1.0 - t / 75.0) * 0.82;
+                    accum += trans * vec3(0.98, 0.99, 1.0) * sa * 1.4;
                     trans *= (1.0 - sa * 0.65);
                   }
                 }
               }
             }
 
-            float extCoeff = 3.2 / max(R, 12.0);
-            float fbGlowY = mix(H * 0.26, H * 0.95, min(1.0, t / 68.0));
-            float earlyGlow = exp(-t * 0.009);
+            float ext = 4.4 / max(R, 10.0);
+            float earlyGlow = exp(-t * 0.0085);
+            float td = tStart + jit * baseStep;
 
-            for (int i = 0; i < 54; i++) {
-              if (trans < 0.015) break;
-              float td = tStart + (float(i) + jitter) * stepLen;
-              if (td > tEnd) break;
+            for (int i = 0; i < 36; i++) {
+              if (trans < 0.025 || td >= tEnd) break;
               vec3 p = ro + rd * td;
               if (p.y < -1.5) break;
 
-              vec3 f = evalField(p, t, H, R, prog, rings, true);
-              float dSmoke = f.x * fade;
-              float dWil = f.z * fade;
-              float totD = dSmoke + dWil;
+              vec4 s = sampleCloud(p, t, H, R, prog, rings, fbY, fbR, true);
+              float dSm = s.x * fade;
+              float dWl = s.z * fade;
+              float totD = dSm + dWl;
 
-              if (totD > 0.004) {
-                float shOpt = 0.0;
-                float shStep = R * 0.18;
-                for (int j = 1; j <= 4; j++) {
-                  vec3 sp = p + sunDir * (float(j) * shStep);
-                  shOpt += evalField(sp, t, H, R, prog, rings, false).x * shStep * extCoeff * 0.95;
-                }
-                float sunTr = exp(-shOpt * 1.65);
-                float powder = 1.0 - exp(-dSmoke * stepLen * extCoeff * 2.4);
-                float hFrac = clamp(p.y / max(H * 1.3, 1.0), 0.0, 1.0);
-                vec3 sunCol = vec3(1.18, 1.08, 0.96) * sunBr;
-                vec3 skyAmb = mix(vec3(0.16, 0.17, 0.21), vec3(0.46, 0.52, 0.62), hFrac) * sunBr;
-                float gDist = length(p - vec3(0.0, fbGlowY * 0.75, 0.0)) / max(R * 1.6, 1.0);
-                vec3 bounceFire = FireCol * exp(-gDist * 1.3) * earlyGlow * 0.75 * (1.0 - hFrac * 0.5);
-                vec3 smokeLight = SmokeCol * (skyAmb + sunCol * sunTr * (0.45 + 0.75 * phase) * mix(0.65, 1.35, powder)) + bounceFire;
-
-                vec3 bb = blackbody(f.y);
-                vec3 fireCol = mix(bb, FireCol * max(f.y * 1.6, 0.0), isExotic * 0.72);
-                vec3 emit = fireCol * smoothstep(0.05, 0.95, f.y) * 3.2;
-
-                vec3 wilCol = vec3(0.95, 0.97, 1.0) * sunBr * (0.55 + 0.45 * sunTr);
-                float wMix = dWil / max(totD, 0.0001);
-                vec3 sampleCol = mix(smokeLight + emit, wilCol, wMix);
-
-                float stepA = 1.0 - exp(-totD * stepLen * extCoeff);
-                accum += trans * sampleCol * stepA;
-                trans *= (1.0 - stepA);
+              if (totD < 0.003) {
+                td += max(baseStep, max(s.w - R * 0.30, 0.0) * 0.72);
+                continue;
               }
+
+              float sh1 = sampleCloud(p + sunDir * (R * 0.12), t, H, R, prog, 0.0, fbY, fbR, false).x;
+              float sh2 = sampleCloud(p + sunDir * (R * 0.42), t, H, R, prog, 0.0, fbY, fbR, false).x;
+              float opt = (sh1 * 0.55 + sh2 * 0.95) * 2.2;
+              float sunMs = 0.68 * exp(-opt * 2.1) + 0.32 * exp(-opt * 0.42);
+              float powder = 1.0 - exp(-dSm * baseStep * ext * 2.8);
+              float hF = clamp(p.y / max(H * 1.25, 1.0), 0.0, 1.0);
+
+              vec3 dirtTint = mix(vec3(0.74, 0.66, 0.58), vec3(1.04, 1.01, 0.98), smoothstep(0.18, 0.68, hF));
+              vec3 sunCol = vec3(1.55, 1.38, 1.16) * sunBr;
+              vec3 skyAmb = mix(vec3(0.06, 0.07, 0.10), vec3(0.36, 0.44, 0.56), hF) * sunBr;
+              float gD = length(p - vec3(0.0, fbY * 0.72, 0.0)) / max(R * 1.55, 1.0);
+              vec3 bounce = FireCol * exp(-gD * 1.4) * earlyGlow * 0.95 * (1.0 - hF * 0.55);
+              vec3 smLit = SmokeCol * dirtTint * (skyAmb + sunCol * sunMs * hg * mix(0.55, 1.45, powder)) + bounce;
+
+              vec3 bb = blackbody(s.y);
+              vec3 fCol = mix(bb, FireCol * max(s.y * 1.75, 0.0), isExotic * 0.72);
+              vec3 emit = fCol * smoothstep(0.04, 0.92, s.y) * 3.8;
+
+              vec3 wCol = vec3(0.96, 0.98, 1.0) * sunBr * (0.52 + 0.55 * sunMs);
+              float wM = dWl / max(totD, 0.0001);
+              vec3 sCol = mix(smLit + emit, wCol, wM);
+
+              float stepA = 1.0 - exp(-totD * baseStep * ext);
+              accum += trans * sCol * stepA;
+              trans *= (1.0 - stepA);
+              td += baseStep;
             }
 
             float alpha = clamp(1.0 - trans, 0.0, 1.0);
             if (alpha < 0.005) discard;
+
             vec3 col = aces(accum / max(alpha, 0.001));
+            float aerial = clamp(tStart / 950.0, 0.0, 0.32);
+            vec3 haze = mix(vec3(0.62, 0.70, 0.80), FireCol * 0.95, earlyGlow * 0.45) * sunBr;
+            col = mix(col, haze, aerial);
             fragColor = vec4(col, alpha);
           }
           """)
@@ -625,16 +703,16 @@ jobs:
             public static final String MODID = "realnukes";
 
             public enum NukeType {
-              TACTICAL(0, 26, 56f, 26f, 540, 0.78f, 4.8f, 44, 45, 1.0f, 0.56f, 0.16f, 0.78f, 0.74f, 0.70f, 1, true, false, false, false, false),
-              LITTLE_BOY(1, 40, 92f, 42f, 720, 0.94f, 7.6f, 68, 70, 1.0f, 0.48f, 0.12f, 0.80f, 0.74f, 0.68f, 1, true, false, false, false, false),
-              FAT_MAN(2, 50, 108f, 50f, 800, 1.0f, 9.2f, 82, 85, 1.0f, 0.44f, 0.10f, 0.78f, 0.71f, 0.64f, 2, true, false, false, false, false),
-              HYDROGEN(3, 66, 148f, 68f, 960, 1.0f, 12.0f, 106, 105, 1.0f, 0.66f, 0.24f, 0.90f, 0.86f, 0.82f, 2, true, false, false, false, false),
-              TSAR_BOMBA(4, 84, 196f, 92f, 1240, 1.0f, 16.0f, 145, 135, 1.0f, 0.50f, 0.14f, 0.92f, 0.88f, 0.84f, 3, true, false, false, false, false),
-              NEUTRON(5, 20, 62f, 28f, 600, 0.92f, 5.5f, 120, 150, 0.25f, 0.78f, 1.0f, 0.76f, 0.90f, 0.97f, 2, false, false, false, true, true),
-              COBALT(6, 44, 102f, 48f, 880, 0.90f, 8.2f, 132, 240, 0.22f, 1.0f, 0.36f, 0.50f, 0.64f, 0.46f, 2, true, false, false, false, true),
-              ANTIMATTER(7, 60, 136f, 62f, 840, 1.0f, 13.0f, 0, 0, 0.78f, 0.25f, 1.0f, 0.72f, 0.56f, 0.90f, 3, false, false, true, false, true),
-              SOLAR(8, 54, 126f, 58f, 900, 1.0f, 10.8f, 62, 55, 1.0f, 0.84f, 0.20f, 0.94f, 0.70f, 0.40f, 2, false, true, false, false, false),
-              MINI_GRENADE(9, 15, 36f, 17f, 420, 0.62f, 3.4f, 24, 25, 1.0f, 0.52f, 0.15f, 0.80f, 0.75f, 0.70f, 1, true, false, false, false, false);
+              TACTICAL(0, 26, 56f, 26f, 540, 0.78f, 4.8f, 44, 45, 1.0f, 0.56f, 0.16f, 0.86f, 0.82f, 0.78f, 1, true, false, false, false, false),
+              LITTLE_BOY(1, 40, 92f, 42f, 720, 0.94f, 7.6f, 68, 70, 1.0f, 0.48f, 0.12f, 0.88f, 0.82f, 0.76f, 1, true, false, false, false, false),
+              FAT_MAN(2, 50, 108f, 50f, 800, 1.0f, 9.2f, 82, 85, 1.0f, 0.44f, 0.10f, 0.86f, 0.80f, 0.74f, 2, true, false, false, false, false),
+              HYDROGEN(3, 66, 148f, 68f, 960, 1.0f, 12.0f, 106, 105, 1.0f, 0.62f, 0.22f, 0.94f, 0.90f, 0.86f, 2, true, false, false, false, false),
+              TSAR_BOMBA(4, 84, 196f, 92f, 1240, 1.0f, 16.0f, 145, 135, 1.0f, 0.48f, 0.12f, 0.96f, 0.92f, 0.88f, 3, true, false, false, false, false),
+              NEUTRON(5, 20, 62f, 28f, 600, 0.92f, 5.5f, 120, 150, 0.25f, 0.78f, 1.0f, 0.78f, 0.92f, 0.98f, 2, false, false, false, true, true),
+              COBALT(6, 44, 102f, 48f, 880, 0.90f, 8.2f, 132, 240, 0.22f, 1.0f, 0.36f, 0.56f, 0.68f, 0.50f, 2, true, false, false, false, true),
+              ANTIMATTER(7, 60, 136f, 62f, 840, 1.0f, 13.0f, 0, 0, 0.78f, 0.25f, 1.0f, 0.74f, 0.58f, 0.92f, 3, false, false, true, false, true),
+              SOLAR(8, 54, 126f, 58f, 900, 1.0f, 10.8f, 62, 55, 1.0f, 0.84f, 0.20f, 0.96f, 0.74f, 0.46f, 2, false, true, false, false, false),
+              MINI_GRENADE(9, 15, 36f, 17f, 420, 0.62f, 3.4f, 24, 25, 1.0f, 0.52f, 0.15f, 0.86f, 0.82f, 0.78f, 1, true, false, false, false, false);
 
               public final int id, radius, dur, radR, radS, rings;
               public final float cloudH, cloudR, flash, shake, fr, fg, fb, sr, sg, sb;
@@ -1019,10 +1097,10 @@ jobs:
                     fxSent = true;
                     ClientCinemaState.push(getX(), getY(), getZ(), getNukeType());
                   }
-                  if (a < getNukeType().dur - 40 && a % 2 == 0) {
+                  if (a < getNukeType().dur - 40 && a % 4 == 0) {
                     double r = getNukeType().cloudR * 0.6;
                     double ang = random.nextDouble() * 6.283;
-                    level().addParticle(ParticleTypes.ASH, getX() + Math.cos(ang) * r * random.nextDouble(), getY() + random.nextDouble() * 28, getZ() + Math.sin(ang) * r * random.nextDouble(), 0, -0.08, 0);
+                    level().addParticle(ParticleTypes.ASH, getX() + Math.cos(ang) * r * random.nextDouble(), getY() + random.nextDouble() * 26, getZ() + Math.sin(ang) * r * random.nextDouble(), 0, -0.08, 0);
                   }
                 }
               }
@@ -1101,9 +1179,9 @@ jobs:
               public void tick() {
                 super.tick();
                 if (level().isClientSide) {
-                  for (int i = 0; i < 5; i++) {
-                    level().addParticle(ParticleTypes.FLAME, getX() + (random.nextDouble() - 0.5) * 0.5, getY() + 4.5, getZ() + (random.nextDouble() - 0.5) * 0.5, 0, 0.3, 0);
-                    level().addParticle(ParticleTypes.CAMPFIRE_COSY_SMOKE, getX(), getY() + 5.2, getZ(), (random.nextDouble() - 0.5) * 0.15, 0.2, (random.nextDouble() - 0.5) * 0.15);
+                  for (int i = 0; i < 3; i++) {
+                    level().addParticle(ParticleTypes.FLAME, getX() + (random.nextDouble() - 0.5) * 0.4, getY() + 4.5, getZ() + (random.nextDouble() - 0.5) * 0.4, 0, 0.3, 0);
+                    level().addParticle(ParticleTypes.CAMPFIRE_COSY_SMOKE, getX(), getY() + 5.2, getZ(), (random.nextDouble() - 0.5) * 0.12, 0.2, (random.nextDouble() - 0.5) * 0.12);
                   }
                 } else {
                   for (int dy = 0; dy <= 4; dy++) {
@@ -1126,7 +1204,7 @@ jobs:
           }
           """)
 
-          # --- NuclearExplosionManager.java ---
+          # --- NuclearExplosionManager.java (otimizado mobile: 260 colunas/tick) ---
           w(J + 'NuclearExplosionManager.java', """
           package com.realnukes;
           import java.util.ArrayList;
@@ -1175,7 +1253,7 @@ jobs:
               Blast(BlockPos c, RealNukesMod.NukeType t) {
                 this.c = c;
                 this.t = t;
-                int ro = (int)(t.radius * 1.32);
+                int ro = (int)(t.radius * 1.28);
                 int[] cnt = new int[ro + 2];
                 for (int dx = -ro; dx <= ro; dx++)
                   for (int dz = -ro; dz <= ro; dz++) {
@@ -1257,7 +1335,7 @@ jobs:
                     it.remove();
                     continue;
                   }
-                  if (z.ticks % 12 == 0) {
+                  if (z.ticks % 16 == 0) {
                     AABB box = new AABB(z.c).inflate(z.r);
                     for (LivingEntity e : lv.getEntitiesOfClass(LivingEntity.class, box)) {
                       if (RealNukesMod.hasHazmat(e)) continue;
@@ -1270,14 +1348,14 @@ jobs:
                       }
                     }
                   }
-                  if (z.ticks % 4 == 0) {
+                  if (z.ticks % 8 == 0) {
                     double a = lv.random.nextDouble() * 6.283;
                     double rd = lv.random.nextDouble() * z.r * 0.8;
-                    lv.sendParticles(ParticleTypes.ASH, z.c.getX() + Math.cos(a) * rd, z.c.getY() + 18, z.c.getZ() + Math.sin(a) * rd, 3, 4, 4, 4, 0.02);
+                    lv.sendParticles(ParticleTypes.ASH, z.c.getX() + Math.cos(a) * rd, z.c.getY() + 18, z.c.getZ() + Math.sin(a) * rd, 2, 4, 4, 4, 0.02);
                   }
                 }
               }
-              if (lv.getGameTime() % 10 == 0) {
+              if (lv.getGameTime() % 12 == 0) {
                 for (ServerPlayer sp : lv.players()) {
                   if (sp.getMainHandItem().is(RealNukesMod.GEIGER_COUNTER.get()) || sp.getOffhandItem().is(RealNukesMod.GEIGER_COUNTER.get())) {
                     double rad = getRad(lv, sp.position());
@@ -1293,9 +1371,9 @@ jobs:
 
             private static boolean stepBlast(ServerLevel lv, Blast b) {
               b.age++;
-              int maxD = Math.min(34, (int)(b.t.radius * 0.42));
+              int maxD = Math.min(30, (int)(b.t.radius * 0.40));
               BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-              int end = Math.min(b.cols.length, b.idx + 550);
+              int end = Math.min(b.cols.length, b.idx + 260);
               for (; b.idx < end; b.idx++) {
                 int pk = b.cols[b.idx];
                 int dx = (pk >> 10) - 512;
@@ -1306,7 +1384,7 @@ jobs:
                 double d = Math.sqrt(dx * dx + dz * dz) / b.t.radius;
                 if (d <= 1.0) {
                   int floor = Math.max(lv.getMinBuildHeight() + 2, b.c.getY() - (int)(maxD * (1.0 - d * d)));
-                  int top = Math.min(lv.getMaxBuildHeight() - 1, b.c.getY() + Math.min(44, (int)(b.t.radius * 0.6)));
+                  int top = Math.min(lv.getMaxBuildHeight() - 1, b.c.getY() + Math.min(38, (int)(b.t.radius * 0.55)));
                   for (int y = top; y >= floor; y--) {
                     mp.set(wx, y, wz);
                     BlockState st = lv.getBlockState(mp);
@@ -1323,7 +1401,7 @@ jobs:
                   }
                 } else {
                   int sy = lv.getHeight(Heightmap.Types.WORLD_SURFACE, wx, wz);
-                  for (int y = sy; y >= Math.max(lv.getMinBuildHeight() + 2, sy - 16); y--) {
+                  for (int y = sy; y >= Math.max(lv.getMinBuildHeight() + 2, sy - 14); y--) {
                     mp.set(wx, y, wz);
                     BlockState st = lv.getBlockState(mp);
                     if (st.isAir() || st.getBlock().getExplosionResistance() >= 1800f) continue;
@@ -1331,7 +1409,7 @@ jobs:
                       lv.setBlock(mp, Blocks.AIR.defaultBlockState(), 18);
                     } else if (st.is(Blocks.GRASS_BLOCK)) {
                       lv.setBlock(mp, (lv.random.nextFloat() < 0.4f ? RealNukesMod.RADIOACTIVE_ASH.get() : Blocks.COARSE_DIRT).defaultBlockState(), 18);
-                      if (lv.random.nextFloat() < 0.08f) {
+                      if (lv.random.nextFloat() < 0.07f) {
                         mp.set(wx, y + 1, wz);
                         if (lv.getBlockState(mp).isAir()) lv.setBlock(mp, Blocks.FIRE.defaultBlockState(), 18);
                       }
@@ -1340,7 +1418,7 @@ jobs:
                   }
                 }
               }
-              double maxSh = b.t.radius * 2.3;
+              double maxSh = b.t.radius * 2.2;
               if (b.shock < maxSh) {
                 double prev = b.shock;
                 b.shock += 4.5;
@@ -1472,7 +1550,7 @@ jobs:
           }
           """)
 
-          # --- ClientCinema.java ---
+          # --- ClientCinema.java (Sampler0 3D + Ceu Apocaliptico + Flash Duplo) ---
           w(J + 'ClientCinema.java', """
           package com.realnukes;
           import java.util.ArrayList;
@@ -1488,6 +1566,8 @@ jobs:
           import net.minecraft.client.Minecraft;
           import net.minecraft.client.player.LocalPlayer;
           import net.minecraft.client.renderer.ShaderInstance;
+          import net.minecraft.client.renderer.texture.AbstractTexture;
+          import net.minecraft.resources.ResourceLocation;
           import net.minecraft.sounds.SoundEvents;
           import net.minecraft.sounds.SoundSource;
           import net.minecraft.world.effect.MobEffects;
@@ -1505,16 +1585,16 @@ jobs:
 
           @Mod.EventBusSubscriber(modid = RealNukesMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
           public class ClientCinema {
+            private static final ResourceLocation VOL_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/noise_vol.png");
             static class Pending {
               int ticks;
               float shake, vol;
               Pending(int t, float s, float v) { ticks = t; shake = s; vol = v; }
             }
             private static final List<Pending> QUEUE = new ArrayList<>();
-            private static float flash = 0f, heat = 0f, shake = 0f, fR = 1f, fG = 0.96f, fB = 0.88f;
-            private static int flash2Timer = 0;
-            private static float flash2Pow = 0f;
-            private static int tick = 0;
+            private static float flash = 0f, flash2 = 0f, heat = 0f, skyGlow = 0f, shake = 0f;
+            private static float fR = 1f, fG = 0.96f, fB = 0.88f, sR = 1f, sG = 0.45f, sB = 0.12f;
+            private static int tick = 0, flash2Delay = 0;
 
             @SubscribeEvent
             public static void onRenderStage(RenderLevelStageEvent ev) {
@@ -1533,7 +1613,11 @@ jobs:
 
               list.sort((a, b) -> Double.compare(b.distanceToSqr(cam), a.distanceToSqr(cam)));
               float sunAngle = mc.level.getTimeOfDay(pt) * 6.28318f;
-              float sunBr = Math.max(0.24f, Math.min(1.15f, 0.35f + 0.80f * (float)Math.cos(sunAngle)));
+              float sunBr = Math.max(0.26f, Math.min(1.20f, 0.38f + 0.82f * (float)Math.cos(sunAngle)));
+
+              AbstractTexture tx = mc.getTextureManager().getTexture(VOL_TEX);
+              tx.setFilter(true, false);
+              RenderSystem.setShaderTexture(0, VOL_TEX);
 
               RenderSystem.enableBlend();
               RenderSystem.blendFuncSeparate(
@@ -1549,11 +1633,11 @@ jobs:
                 RealNukesMod.NukeType ty = nc.getNukeType();
                 float t = nc.getCloudAge() + pt;
                 float prog = Math.min(1f, t / ty.dur);
-                float rise = 1f - (float)Math.pow(1f - Math.min(1f, t / (ty.dur * 0.32f)), 3.2);
+                float rise = 1f - (float)Math.pow(1f - Math.min(1f, t / (ty.dur * 0.31f)), 3.2);
                 float H = ty.cloudH * (0.06f + 0.94f * rise);
-                float R = ty.cloudR * (0.22f + 0.78f * (float)Math.pow(Math.min(1f, t / (ty.dur * 0.38f)), 0.55)) + (prog > 0.32f ? (prog - 0.32f) * ty.cloudR * 0.72f : 0f);
-                float bR = Math.max(R * 2.25f, t < 75f ? t * 5.0f + 10f : 0f);
-                float bH = Math.max(H + R * 1.15f, t < 75f ? t * 5.0f + 10f : 0f);
+                float R = ty.cloudR * (0.22f + 0.78f * (float)Math.pow(Math.min(1f, t / (ty.dur * 0.37f)), 0.54)) + (prog > 0.30f ? (prog - 0.30f) * ty.cloudR * 0.76f : 0f);
+                float bR = Math.max(R * 2.20f, t < 75f ? t * 5.0f + 10f : 0f);
+                float bH = Math.max(H + R * 1.12f, t < 75f ? t * 5.0f + 10f : 0f);
                 float cx = (float)(cam.x - nc.getX()), cy = (float)(cam.y - nc.getY()), cz = (float)(cam.z - nc.getZ());
 
                 Matrix4f localMV = new Matrix4f(viewBase).translate(-cx, -cy, -cz);
@@ -1564,7 +1648,7 @@ jobs:
                 sh.safeGetUniform("CloudParams").set(t, ty.cloudH, ty.cloudR, (float)ty.dur);
                 sh.safeGetUniform("FireCol").set(ty.fr, ty.fg, ty.fb);
                 sh.safeGetUniform("SmokeCol").set(ty.sr, ty.sg, ty.sb);
-                sh.safeGetUniform("ExtraParams").set((float)ty.rings, ty.exotic ? 1f : 0f, sunBr, (float)(nc.getId() % 97) * 1.73f);
+                sh.safeGetUniform("ExtraParams").set((float)ty.rings, ty.exotic ? 1f : 0f, sunBr, (float)(nc.getId() % 97) * 0.07f);
 
                 boolean inside = (cx >= -bR && cx <= bR && cy >= -3f && cy <= bH && cz >= -bR && cz <= bR);
                 if (inside) {
@@ -1611,6 +1695,15 @@ jobs:
             }
 
             @SubscribeEvent
+            public static void onFogColor(ViewportEvent.ComputeFogColor ev) {
+              if (skyGlow <= 0.01f) return;
+              float k = Math.min(0.85f, skyGlow);
+              ev.setRed(ev.getRed() * (1f - k) + sR * k);
+              ev.setGreen(ev.getGreen() * (1f - k) + sG * k);
+              ev.setBlue(ev.getBlue() * (1f - k) + sB * k);
+            }
+
+            @SubscribeEvent
             public static void onClientTick(TickEvent.ClientTickEvent ev) {
               if (ev.phase != TickEvent.Phase.END) return;
               Minecraft mc = Minecraft.getInstance();
@@ -1621,27 +1714,27 @@ jobs:
               synchronized (ClientCinemaState.INCOMING) {
                 for (ClientCinemaState.Event e : ClientCinemaState.INCOMING) {
                   double d = p.position().distanceTo(new Vec3(e.x, e.y, e.z));
-                  float fac = (float)Math.max(0.0, 1.35 - d / 420.0);
-                  float pow = Math.min(1f, e.type.flash * fac);
-                  flash = Math.min(1f, Math.max(flash, pow));
-                  flash2Pow = Math.max(flash2Pow, pow * 0.92f);
-                  flash2Timer = 8;
-                  heat = Math.min(0.32f, Math.max(heat, 0.30f * fac));
-                  fR = 0.75f + 0.25f * e.type.fr;
-                  fG = 0.72f + 0.28f * e.type.fg;
-                  fB = 0.68f + 0.32f * e.type.fb;
+                  float fac = (float)Math.max(0.0, 1.35 - d / 440.0);
+                  flash = Math.min(1f, Math.max(flash, e.type.flash * fac));
+                  flash2 = Math.min(0.85f, e.type.flash * fac * 0.85f);
+                  flash2Delay = 5;
+                  heat = Math.min(0.30f, Math.max(heat, 0.28f * fac));
+                  skyGlow = Math.min(0.85f, Math.max(skyGlow, 0.80f * fac));
+                  fR = 0.80f + 0.20f * e.type.fr;
+                  fG = 0.78f + 0.22f * e.type.fg;
+                  fB = 0.72f + 0.28f * e.type.fb;
+                  sR = e.type.fr;
+                  sG = e.type.fg * 0.75f;
+                  sB = e.type.fb * 0.5f;
                   int delay = Math.max(1, (int)(d / 2.2));
                   QUEUE.add(new Pending(delay, e.type.shake * Math.min(1f, fac), Math.min(1f, fac)));
                 }
                 ClientCinemaState.INCOMING.clear();
               }
 
-              if (flash2Timer > 0) {
-                flash2Timer--;
-                if (flash2Timer == 0) {
-                  flash = Math.min(1f, Math.max(flash, flash2Pow));
-                  flash2Pow = 0f;
-                }
+              if (flash2Delay > 0) {
+                flash2Delay--;
+                if (flash2Delay == 0) flash = Math.max(flash, flash2);
               }
 
               Iterator<Pending> it = QUEUE.iterator();
@@ -1657,8 +1750,9 @@ jobs:
                 }
               }
 
-              flash *= 0.90f; if (flash < 0.005f) flash = 0f;
+              flash *= 0.86f; if (flash < 0.005f) flash = 0f;
               heat *= 0.975f; if (heat < 0.005f) heat = 0f;
+              skyGlow *= 0.986f; if (skyGlow < 0.005f) skyGlow = 0f;
               shake *= 0.89f; if (shake < 0.02f) shake = 0f;
             }
 
@@ -1697,7 +1791,7 @@ jobs:
           }
           """)
 
-          print('REALNUKES VOLUMETRICO GLSL GERADO!')
+          print('REALNUKES ULTRA MOBILE CINEMA 3.0.0 GERADO!')
           PYEOF
 
       - name: Compilar JAR
