@@ -1,4 +1,4 @@
-name: Compilar RealNukes 1.20.1
+name: Compilar RealNukes Volumetrico 1.20.1
 
 on:
   workflow_dispatch: {}
@@ -19,7 +19,7 @@ jobs:
         with:
           gradle-version: '8.8'
 
-      - name: Gerar Mod RealNukes Cinematic
+      - name: Gerar Mod RealNukes Volumetrico GLSL
         run: |
           python3 - << 'PYEOF'
           import os, zlib, struct, math, json
@@ -93,9 +93,9 @@ jobs:
             id 'eclipse'
             id 'net.minecraftforge.gradle' version '[6.0,6.2)'
           }
-          version = '1.0.0'
+          version = '2.0.0'
           group = 'com.realnukes'
-          base { archivesName = 'realnukes-1.20.1' }
+          base { archivesName = 'realnukes-volumetric-1.20.1' }
           java.toolchain.languageVersion = JavaLanguageVersion.of(17)
           minecraft {
             mappings channel: 'official', version: '1.20.1'
@@ -109,16 +109,16 @@ jobs:
             manifest {
               attributes([
                 'Specification-Title': 'realnukes',
-                'Specification-Version': '1',
+                'Specification-Version': '2',
                 'Implementation-Title': 'realnukes',
-                'Implementation-Version': '1.0.0'
+                'Implementation-Version': '2.0.0'
               ])
             }
             finalizedBy 'reobfJar'
           }
           """)
 
-          w('src/main/resources/pack.mcmeta', '{"pack":{"description":"RealNukes","pack_format":15}}\n')
+          w('src/main/resources/pack.mcmeta', '{"pack":{"description":"RealNukes Volumetric","pack_format":15}}\n')
 
           w('src/main/resources/META-INF/mods.toml', """
           modLoader="javafml"
@@ -126,9 +126,9 @@ jobs:
           license="MIT"
           [[mods]]
           modId="realnukes"
-          version="1.0.0"
-          displayName="RealNukes Cinematic"
-          description="Realistic 3D volumetric nuclear clouds and arsenal."
+          version="2.0.0"
+          displayName="RealNukes Volumetric Cinema"
+          description="True GLSL 3D raymarched volumetric nuclear mushroom clouds."
           [[dependencies.realnukes]]
           modId="forge"
           mandatory=true
@@ -143,8 +143,320 @@ jobs:
           side="BOTH"
           """)
 
-          # --- TEXTURAS & MODELOS ---
           A = 'src/main/resources/assets/realnukes/'
+
+          # --- SHADERS GLSL 3D VOLUMETRICOS ---
+          w(A + 'shaders/core/volumetric_nuke.json', """
+          {
+            "blend": {
+              "func": "add",
+              "srcrgb": "srcalpha",
+              "dstrgb": "1-srcalpha"
+            },
+            "vertex": "realnukes:volumetric_nuke",
+            "fragment": "realnukes:volumetric_nuke",
+            "attributes": ["Position"],
+            "samplers": [],
+            "uniforms": [
+              {"name": "ModelViewMat", "type": "matrix4x4", "count": 16, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]},
+              {"name": "ProjMat", "type": "matrix4x4", "count": 16, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]},
+              {"name": "LocalMV", "type": "matrix4x4", "count": 16, "values": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]},
+              {"name": "CamPos", "type": "float", "count": 3, "values": [0.0, 0.0, 0.0]},
+              {"name": "BoxMin", "type": "float", "count": 3, "values": [-100.0, -5.0, -100.0]},
+              {"name": "BoxMax", "type": "float", "count": 3, "values": [100.0, 200.0, 100.0]},
+              {"name": "CloudParams", "type": "float", "count": 4, "values": [10.0, 120.0, 60.0, 900.0]},
+              {"name": "FireCol", "type": "float", "count": 3, "values": [1.0, 0.5, 0.12]},
+              {"name": "SmokeCol", "type": "float", "count": 3, "values": [0.88, 0.84, 0.80]},
+              {"name": "ExtraParams", "type": "float", "count": 4, "values": [2.0, 0.0, 1.0, 1.0]}
+            ]
+          }
+          """)
+
+          w(A + 'shaders/core/volumetric_nuke.vsh', """
+          #version 150
+          in vec3 Position;
+          uniform mat4 LocalMV;
+          uniform mat4 ProjMat;
+          out vec3 vLocalPos;
+          void main() {
+            vLocalPos = Position;
+            gl_Position = ProjMat * LocalMV * vec4(Position, 1.0);
+          }
+          """)
+
+          w(A + 'shaders/core/volumetric_nuke.fsh', """
+          #version 150
+          in vec3 vLocalPos;
+          uniform vec3 CamPos;
+          uniform vec3 BoxMin;
+          uniform vec3 BoxMax;
+          uniform vec4 CloudParams;
+          uniform vec3 FireCol;
+          uniform vec3 SmokeCol;
+          uniform vec4 ExtraParams;
+          out vec4 fragColor;
+
+          float h31(vec3 p) {
+            p = fract(p * 0.1031);
+            p += dot(p, p.yzx + 33.33);
+            return fract((p.x + p.y) * p.z);
+          }
+
+          float n3(vec3 p) {
+            vec3 i = floor(p);
+            vec3 f = fract(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float a = mix(h31(i), h31(i + vec3(1.0, 0.0, 0.0)), f.x);
+            float b = mix(h31(i + vec3(0.0, 1.0, 0.0)), h31(i + vec3(1.0, 1.0, 0.0)), f.x);
+            float c = mix(h31(i + vec3(0.0, 0.0, 1.0)), h31(i + vec3(1.0, 0.0, 1.0)), f.x);
+            float d = mix(h31(i + vec3(0.0, 1.0, 1.0)), h31(i + vec3(1.0, 1.0, 1.0)), f.x);
+            return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+          }
+
+          const mat3 M3 = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
+
+          float billow4(vec3 p) {
+            float v = 0.0;
+            float a = 0.52;
+            for (int i = 0; i < 4; i++) {
+              float n = n3(p);
+              float b = 1.0 - abs(n * 2.0 - 1.0);
+              v += a * b * b;
+              p = M3 * p * 2.07 + vec3(13.1, 7.7, 19.3);
+              a *= 0.48;
+            }
+            return v;
+          }
+
+          float billow2(vec3 p) {
+            float n1 = 1.0 - abs(n3(p) * 2.0 - 1.0);
+            p = M3 * p * 2.05 + vec3(13.1, 7.7, 19.3);
+            float n2 = 1.0 - abs(n3(p) * 2.0 - 1.0);
+            return 0.65 * n1 * n1 + 0.35 * n2 * n2;
+          }
+
+          float smin(float a, float b, float k) {
+            float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+            return mix(b, a, h) - k * h * (1.0 - h);
+          }
+
+          vec2 hitBox(vec3 ro, vec3 rd, vec3 b0, vec3 b1) {
+            vec3 s = vec3(abs(rd.x) < 1e-6 ? 1e-6 : rd.x, abs(rd.y) < 1e-6 ? 1e-6 : rd.y, abs(rd.z) < 1e-6 ? 1e-6 : rd.z);
+            vec3 iv = 1.0 / s;
+            vec3 t0 = (b0 - ro) * iv;
+            vec3 t1 = (b1 - ro) * iv;
+            vec3 tn = min(t0, t1);
+            vec3 tf = max(t0, t1);
+            return vec2(max(max(tn.x, tn.y), max(tn.z, 0.0)), min(min(tf.x, tf.y), tf.z));
+          }
+
+          vec3 blackbody(float temp) {
+            vec3 c1 = vec3(0.95, 0.10, 0.01);
+            vec3 c2 = vec3(1.00, 0.44, 0.05);
+            vec3 c3 = vec3(1.00, 0.88, 0.40);
+            vec3 c4 = vec3(1.00, 0.99, 0.96);
+            vec3 c = mix(vec3(0.0), c1, smoothstep(0.06, 0.28, temp));
+            c = mix(c, c2, smoothstep(0.26, 0.56, temp));
+            c = mix(c, c3, smoothstep(0.54, 0.84, temp));
+            c = mix(c, c4, smoothstep(0.80, 1.15, temp));
+            return c;
+          }
+
+          vec3 aces(vec3 x) {
+            return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+          }
+
+          float hgPhase(float cosT, float g) {
+            float g2 = g * g;
+            return (1.0 - g2) / (4.0 * 3.14159 * pow(max(1.0 + g2 - 2.0 * g * cosT, 0.001), 1.5));
+          }
+
+          vec3 evalField(vec3 p, float t, float H, float R, float prog, float rings, bool hi) {
+            float rXZ = length(p.xz);
+            float ang = atan(p.z, p.x + 1e-5);
+            float capFlat = mix(0.64, 0.38, smoothstep(0.22, 0.88, prog));
+            float torMaj = R * 0.54;
+            vec2 tc = vec2(rXZ - torMaj, (p.y - H) / max(capFlat, 0.2));
+            float torD = length(tc);
+            float torA = atan(tc.y, tc.x + 1e-5);
+            float roll = torA + t * 0.044;
+            vec3 capAdv = vec3(cos(ang) * (torMaj + torD * cos(roll)), H + torD * sin(roll), sin(ang) * (torMaj + torD * cos(roll)));
+            float freq = 2.45 / max(R, 8.0);
+            float bCap = hi ? billow4(capAdv * freq + vec3(0.0, -t * 0.025, ExtraParams.w)) : billow2(capAdv * freq + vec3(0.0, -t * 0.025, ExtraParams.w));
+            float dTor = torD - R * 0.44;
+            float dDome = length(vec3(p.x, (p.y - (H + R * 0.14)) * 1.22, p.z)) - R * 0.66;
+            float dAnvil = length(vec3(p.x * 0.72, (p.y - (H + R * 0.24)) * 2.8, p.z * 0.72)) - R * (0.55 + prog * 0.55);
+            float dCap = smin(dTor, dDome, R * 0.24);
+            if (prog > 0.28) dCap = smin(dCap, dAnvil, R * 0.22);
+            float dispCap = (bCap - 0.44) * R * 0.52;
+            float sdfCap = dCap - dispCap;
+
+            float hN = clamp(p.y / max(H, 1.0), 0.0, 1.0);
+            float stemProf = R * (0.175 - 0.045 * sin(hN * 3.14159) + 0.22 * pow(max(1.0 - hN * 4.2, 0.0), 2.0) + 0.24 * pow(max((hN - 0.72) / 0.28, 0.0), 2.0));
+            float dStem = max(rXZ - stemProf, max(-p.y, p.y - H * 1.02));
+            vec3 stemP = vec3(p.x * cos(hN * 1.8) - p.z * sin(hN * 1.8), p.y - t * 1.15, p.x * sin(hN * 1.8) + p.z * cos(hN * 1.8));
+            float bStem = hi ? billow4(stemP * (freq * 1.65)) : billow2(stemP * (freq * 1.65));
+            float sdfStem = dStem - (bStem - 0.42) * R * 0.24;
+
+            float baseR = R * (0.56 + prog * 1.12);
+            float dBase = length(vec2(rXZ - baseR, (p.y - R * 0.07) * 2.2)) - R * 0.24;
+            vec3 baseP = vec3(p.x * (1.0 - prog * 0.25), p.y - t * 0.22, p.z * (1.0 - prog * 0.25));
+            float bBase = hi ? billow4(baseP * (freq * 1.45)) : billow2(baseP * (freq * 1.45));
+            float sdfBase = dBase - (bBase - 0.44) * R * 0.26;
+
+            float sdf = smin(sdfCap, sdfStem, R * 0.18);
+            sdf = smin(sdf, sdfBase, R * 0.16);
+
+            float fbY = mix(H * 0.26, H * 0.95, min(1.0, t / 68.0));
+            float fbR = R * mix(0.62, 0.48, min(1.0, t / 90.0));
+            float dFb = length(p - vec3(0.0, fbY, 0.0)) - fbR;
+            float early = exp(-t * 0.022);
+            sdf = smin(sdf, dFb - (bCap - 0.4) * R * 0.28, R * 0.20 * early + 0.01);
+
+            float dens = clamp(-sdf / (R * 0.14), 0.0, 1.0);
+            dens = pow(max(dens, 0.0001), 0.72) * step(0.001, dens);
+
+            float wilson = 0.0;
+            if (t > 10.0 && t < 280.0) {
+              float wf = smoothstep(10.0, 26.0, t) * (1.0 - smoothstep(170.0, 280.0, t));
+              for (int w = 0; w < 3; w++) {
+                if (float(w) < rings) {
+                  float wy = H * (0.35 + float(w) * 0.20);
+                  float wr = R * (0.62 + float(w) * 0.25) * (0.72 + t * 0.0024);
+                  float dy = abs(p.y - wy);
+                  float dr = abs(rXZ - wr);
+                  if (dy < R * 0.12 && dr < R * 0.32) {
+                    float wn = hi ? billow2(vec3(p.x, p.y * 2.0, p.z) * freq * 1.8) : 0.5;
+                    float ringD = exp(-dy * dy / (R * R * 0.0025)) * exp(-dr * dr / (R * R * 0.032)) * (0.45 + 0.55 * wn);
+                    wilson += ringD * wf * 0.55;
+                  }
+                }
+              }
+            }
+
+            float coreCool = exp(-t * 0.015);
+            float embCool = exp(-t * 0.0046);
+            float fbProx = clamp(1.0 - length(p - vec3(0.0, fbY, 0.0)) / (fbR * 1.35), 0.0, 1.0);
+            float capUnder = clamp(1.0 - abs(p.y - (H - R * 0.12)) / (R * 0.58), 0.0, 1.0) * clamp(1.0 - rXZ / (R * 0.95), 0.0, 1.0);
+            float crevice = clamp(1.0 - bCap * 1.25, 0.0, 1.0);
+            float stemGlow = clamp(1.0 - rXZ / (stemProf * 1.1), 0.0, 1.0) * clamp(1.0 - abs(hN - 0.75) * 1.8, 0.0, 1.0) * 0.65;
+            float fireTemp = (fbProx * 1.45 * coreCool) + (capUnder * (0.55 + 1.15 * crevice) * embCool) + (stemGlow * embCool * 0.85) + (crevice * 0.55 * coreCool);
+            return vec3(dens, fireTemp, wilson);
+          }
+
+          void main() {
+            vec3 ro = CamPos;
+            vec3 rd = normalize(vLocalPos - CamPos);
+            vec2 hit = hitBox(ro, rd, BoxMin, BoxMax);
+            if (hit.x >= hit.y) discard;
+
+            float t = CloudParams.x;
+            float Hmax = CloudParams.y;
+            float Rmax = CloudParams.z;
+            float dur = CloudParams.w;
+            float prog = clamp(t / dur, 0.0, 1.0);
+            float fade = prog > 0.78 ? clamp((1.0 - prog) / 0.22, 0.0, 1.0) : 1.0;
+            float rise = 1.0 - pow(max(1.0 - min(1.0, t / (dur * 0.32)), 0.0001), 3.2);
+            float H = Hmax * (0.06 + 0.94 * rise);
+            float R = Rmax * (0.22 + 0.78 * pow(max(min(1.0, t / (dur * 0.38)), 0.0001), 0.55)) + (prog > 0.32 ? (prog - 0.32) * Rmax * 0.72 : 0.0);
+            float rings = ExtraParams.x;
+            float isExotic = ExtraParams.y;
+            float sunBr = ExtraParams.z;
+
+            vec3 sunDir = normalize(vec3(0.58, 0.74, 0.34));
+            float cosTheta = dot(rd, sunDir);
+            float phase = mix(hgPhase(cosTheta, 0.58), hgPhase(cosTheta, -0.25), 0.32) * 2.6;
+
+            float tStart = hit.x;
+            float tEnd = hit.y;
+            if (rd.y < -1e-5) {
+              float tg = (-1.5 - ro.y) / rd.y;
+              if (tg > tStart && tg < tEnd) tEnd = tg;
+            }
+
+            float distSpan = max(tEnd - tStart, 0.01);
+            int STEPS = 54;
+            float stepLen = distSpan / float(STEPS);
+            float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+
+            vec3 accum = vec3(0.0);
+            float trans = 1.0;
+
+            if (t < 75.0) {
+              float sR = t * 4.8;
+              float bS = dot(ro, rd);
+              float cS = dot(ro, ro) - sR * sR;
+              float disc = bS * bS - cS;
+              if (disc > 0.0) {
+                float sq = sqrt(disc);
+                float ts = (-bS + sq > 0.0) ? (-bS - sq > 0.0 ? -bS - sq : -bS + sq) : -1.0;
+                if (ts > 0.0 && ts < tEnd) {
+                  vec3 sp = ro + rd * ts;
+                  if (sp.y > -1.0) {
+                    vec3 sn = normalize(sp);
+                    float fres = pow(max(1.0 - abs(dot(sn, rd)), 0.0001), 2.3);
+                    float sa = fres * (1.0 - t / 75.0) * 0.78;
+                    accum += trans * vec3(0.95, 0.97, 1.0) * sa * 1.35;
+                    trans *= (1.0 - sa * 0.65);
+                  }
+                }
+              }
+            }
+
+            float extCoeff = 3.2 / max(R, 12.0);
+            float fbGlowY = mix(H * 0.26, H * 0.95, min(1.0, t / 68.0));
+            float earlyGlow = exp(-t * 0.009);
+
+            for (int i = 0; i < 54; i++) {
+              if (trans < 0.015) break;
+              float td = tStart + (float(i) + jitter) * stepLen;
+              if (td > tEnd) break;
+              vec3 p = ro + rd * td;
+              if (p.y < -1.5) break;
+
+              vec3 f = evalField(p, t, H, R, prog, rings, true);
+              float dSmoke = f.x * fade;
+              float dWil = f.z * fade;
+              float totD = dSmoke + dWil;
+
+              if (totD > 0.004) {
+                float shOpt = 0.0;
+                float shStep = R * 0.18;
+                for (int j = 1; j <= 4; j++) {
+                  vec3 sp = p + sunDir * (float(j) * shStep);
+                  shOpt += evalField(sp, t, H, R, prog, rings, false).x * shStep * extCoeff * 0.95;
+                }
+                float sunTr = exp(-shOpt * 1.65);
+                float powder = 1.0 - exp(-dSmoke * stepLen * extCoeff * 2.4);
+                float hFrac = clamp(p.y / max(H * 1.3, 1.0), 0.0, 1.0);
+                vec3 sunCol = vec3(1.18, 1.08, 0.96) * sunBr;
+                vec3 skyAmb = mix(vec3(0.16, 0.17, 0.21), vec3(0.46, 0.52, 0.62), hFrac) * sunBr;
+                float gDist = length(p - vec3(0.0, fbGlowY * 0.75, 0.0)) / max(R * 1.6, 1.0);
+                vec3 bounceFire = FireCol * exp(-gDist * 1.3) * earlyGlow * 0.75 * (1.0 - hFrac * 0.5);
+                vec3 smokeLight = SmokeCol * (skyAmb + sunCol * sunTr * (0.45 + 0.75 * phase) * mix(0.65, 1.35, powder)) + bounceFire;
+
+                vec3 bb = blackbody(f.y);
+                vec3 fireCol = mix(bb, FireCol * max(f.y * 1.6, 0.0), isExotic * 0.72);
+                vec3 emit = fireCol * smoothstep(0.05, 0.95, f.y) * 3.2;
+
+                vec3 wilCol = vec3(0.95, 0.97, 1.0) * sunBr * (0.55 + 0.45 * sunTr);
+                float wMix = dWil / max(totD, 0.0001);
+                vec3 sampleCol = mix(smokeLight + emit, wilCol, wMix);
+
+                float stepA = 1.0 - exp(-totD * stepLen * extCoeff);
+                accum += trans * sampleCol * stepA;
+                trans *= (1.0 - stepA);
+              }
+            }
+
+            float alpha = clamp(1.0 - trans, 0.0, 1.0);
+            if (alpha < 0.005) discard;
+            vec3 col = aces(accum / max(alpha, 0.001));
+            fragColor = vec4(col, alpha);
+          }
+          """)
+
+          # --- TEXTURAS & MODELOS ---
           bombs = [
             ('tactical_nuke', (72, 88, 62), (44, 54, 38), (235, 200, 30), (80, 255, 90)),
             ('little_boy', (64, 72, 58), (36, 42, 32), (225, 185, 35), (255, 70, 50)),
@@ -220,67 +532,6 @@ jobs:
 
           png(A + 'textures/models/armor/hazmat_layer_1.png', 64, 32, lambda x, y, W, H: (28, 38, 48, 255) if (9 <= x <= 14 and 10 <= y <= 13) else ((34, 36, 40, 255) if y >= 27 else (236, 198, 28, 255)))
           png(A + 'textures/models/armor/hazmat_layer_2.png', 64, 32, lambda x, y, W, H: (42, 42, 46, 255) if y in (16, 17, 24, 25) else (226, 188, 24, 255))
-
-          # --- ATLAS VOLUMETRICO 128x128 (4 TILES COUVE-FLOR + fBm) ---
-          lobes = [
-            [(0.0, 0.0, 0.56), (-0.32, -0.16, 0.40), (0.34, -0.12, 0.42), (-0.18, 0.32, 0.38), (0.26, 0.28, 0.36), (0.02, -0.34, 0.35), (-0.38, 0.16, 0.32), (0.38, 0.12, 0.30)],
-            [(0.04, -0.04, 0.54), (-0.34, 0.08, 0.42), (0.30, -0.24, 0.40), (-0.14, -0.34, 0.38), (0.34, 0.20, 0.38), (-0.22, 0.34, 0.34), (0.08, 0.36, 0.32), (-0.40, -0.18, 0.28)],
-            [(-0.04, 0.02, 0.55), (0.32, -0.18, 0.42), (-0.30, -0.26, 0.38), (0.22, 0.32, 0.40), (-0.32, 0.24, 0.36), (0.04, -0.36, 0.34), (0.40, 0.04, 0.30), (-0.08, 0.38, 0.32)],
-            [(0.0, 0.04, 0.54), (-0.28, -0.24, 0.42), (0.36, 0.02, 0.40), (-0.36, 0.14, 0.38), (0.16, -0.34, 0.36), (0.24, 0.32, 0.36), (-0.16, 0.34, 0.34), (0.0, -0.22, 0.42)]
-          ]
-
-          def eval_billow(u, v, tid):
-            h = 0.0
-            for cx, cy, cr in lobes[tid]:
-              d = 1.0 - math.hypot(u - cx, v - cy) / cr
-              if d > 0:
-                s = d * d * (3.0 - 2.0 * d)
-                if s > h:
-                  h = s
-            return h
-
-          def mk_atlas(x, y, W, H):
-            tx, ty = x // 64, y // 64
-            tid = ty * 2 + tx
-            u = ((x % 64) / 63.0) * 2.0 - 1.0
-            v = ((y % 64) / 63.0) * 2.0 - 1.0
-            rad = math.hypot(u, v)
-            if rad >= 0.98:
-              return (255, 255, 255, 0)
-            h0 = eval_billow(u, v, tid)
-            hx = eval_billow(u + 0.04, v, tid) - h0
-            hy = eval_billow(u, v + 0.04, tid) - h0
-            tb = fbm(x % 64, y % 64, 64, 64, tid * 31.0 + 13.0)
-            tb2 = fbm((x % 64) * 2, (y % 64) * 2, 64, 64, tid * 47.0 + 5.0)
-            dens = h0 + 0.34 * (tb - 0.45) + 0.14 * (tb2 - 0.5)
-            edge = max(0.0, min(1.0, (0.98 - rad) / 0.44))
-            edge = edge * edge * (3.0 - 2.0 * edge)
-            a = max(0.0, min(1.0, (dens - 0.12) * 2.6)) * edge
-            lit = max(0.42, min(1.0, 0.74 - hx * 2.4 + hy * 2.8 + (tb - 0.5) * 0.28 - v * 0.18))
-            c = lit * 255.0
-            return (c, c * 0.99, c * 0.97, a * 235.0)
-
-          png(A + 'textures/entity/volumetric_cloud.png', 128, 128, mk_atlas)
-
-          def mk_fire(x, y, W, H):
-            u = (x / 63.0) * 2.0 - 1.0
-            v = (y / 63.0) * 2.0 - 1.0
-            r = math.hypot(u, v)
-            if r >= 1.0:
-              return (255, 200, 100, 0)
-            n = fbm(x, y, 64, 64, 99.0)
-            f = max(0.0, 1.0 - r * r)
-            a = (f ** 1.6) * (0.55 + 0.45 * n) * 255.0
-            return (255, 155 + f * 100, 45 + (f ** 2) * 200, a)
-
-          png(A + 'textures/entity/fireball_core.png', 64, 64, mk_fire)
-
-          def mk_ring(x, y, W, H):
-            n = fbm(x, y, 64, 64, 123.0)
-            e = math.sin(math.pi * y / 63.0)
-            return (248, 250, 255, (110 + n * 110) * (e ** 0.85))
-
-          png(A + 'textures/entity/shockwave_ring.png', 64, 64, mk_ring)
           png(A + 'textures/entity/missile.png', 32, 32, lambda x, y, W, H: (225, 40, 40, 255) if y < 8 else (((240, 200, 30, 255) if ((x // 4) % 2 == 0) else (24, 24, 28, 255)) if 12 <= y <= 16 else (205, 212, 222, 255)))
 
           pt = {
@@ -374,26 +625,26 @@ jobs:
             public static final String MODID = "realnukes";
 
             public enum NukeType {
-              TACTICAL(0, 26, 56f, 26f, 540, 0.78f, 4.8f, 44, 45, 1.0f, 0.56f, 0.16f, 0.76f, 0.72f, 0.68f, 1, true, false, false, false),
-              LITTLE_BOY(1, 40, 92f, 42f, 720, 0.94f, 7.6f, 68, 70, 1.0f, 0.48f, 0.12f, 0.78f, 0.72f, 0.66f, 1, true, false, false, false),
-              FAT_MAN(2, 50, 108f, 50f, 800, 1.0f, 9.2f, 82, 85, 1.0f, 0.44f, 0.10f, 0.76f, 0.69f, 0.62f, 2, true, false, false, false),
-              HYDROGEN(3, 66, 148f, 68f, 960, 1.0f, 12.0f, 106, 105, 1.0f, 0.66f, 0.24f, 0.88f, 0.84f, 0.80f, 2, true, false, false, false),
-              TSAR_BOMBA(4, 84, 196f, 92f, 1240, 1.0f, 16.0f, 145, 135, 1.0f, 0.50f, 0.14f, 0.91f, 0.87f, 0.82f, 3, true, false, false, false),
-              NEUTRON(5, 20, 62f, 28f, 600, 0.92f, 5.5f, 120, 150, 0.25f, 0.78f, 1.0f, 0.74f, 0.90f, 0.97f, 2, false, false, false, true),
-              COBALT(6, 44, 102f, 48f, 880, 0.90f, 8.2f, 132, 240, 0.22f, 1.0f, 0.36f, 0.48f, 0.62f, 0.44f, 2, true, false, false, false),
-              ANTIMATTER(7, 60, 136f, 62f, 840, 1.0f, 13.0f, 0, 0, 0.78f, 0.25f, 1.0f, 0.70f, 0.54f, 0.88f, 3, false, false, true, false),
-              SOLAR(8, 54, 126f, 58f, 900, 1.0f, 10.8f, 62, 55, 1.0f, 0.84f, 0.20f, 0.94f, 0.68f, 0.38f, 2, false, true, false, false),
-              MINI_GRENADE(9, 15, 36f, 17f, 420, 0.62f, 3.4f, 24, 25, 1.0f, 0.52f, 0.15f, 0.78f, 0.73f, 0.68f, 1, true, false, false, false);
+              TACTICAL(0, 26, 56f, 26f, 540, 0.78f, 4.8f, 44, 45, 1.0f, 0.56f, 0.16f, 0.78f, 0.74f, 0.70f, 1, true, false, false, false, false),
+              LITTLE_BOY(1, 40, 92f, 42f, 720, 0.94f, 7.6f, 68, 70, 1.0f, 0.48f, 0.12f, 0.80f, 0.74f, 0.68f, 1, true, false, false, false, false),
+              FAT_MAN(2, 50, 108f, 50f, 800, 1.0f, 9.2f, 82, 85, 1.0f, 0.44f, 0.10f, 0.78f, 0.71f, 0.64f, 2, true, false, false, false, false),
+              HYDROGEN(3, 66, 148f, 68f, 960, 1.0f, 12.0f, 106, 105, 1.0f, 0.66f, 0.24f, 0.90f, 0.86f, 0.82f, 2, true, false, false, false, false),
+              TSAR_BOMBA(4, 84, 196f, 92f, 1240, 1.0f, 16.0f, 145, 135, 1.0f, 0.50f, 0.14f, 0.92f, 0.88f, 0.84f, 3, true, false, false, false, false),
+              NEUTRON(5, 20, 62f, 28f, 600, 0.92f, 5.5f, 120, 150, 0.25f, 0.78f, 1.0f, 0.76f, 0.90f, 0.97f, 2, false, false, false, true, true),
+              COBALT(6, 44, 102f, 48f, 880, 0.90f, 8.2f, 132, 240, 0.22f, 1.0f, 0.36f, 0.50f, 0.64f, 0.46f, 2, true, false, false, false, true),
+              ANTIMATTER(7, 60, 136f, 62f, 840, 1.0f, 13.0f, 0, 0, 0.78f, 0.25f, 1.0f, 0.72f, 0.56f, 0.90f, 3, false, false, true, false, true),
+              SOLAR(8, 54, 126f, 58f, 900, 1.0f, 10.8f, 62, 55, 1.0f, 0.84f, 0.20f, 0.94f, 0.70f, 0.40f, 2, false, true, false, false, false),
+              MINI_GRENADE(9, 15, 36f, 17f, 420, 0.62f, 3.4f, 24, 25, 1.0f, 0.52f, 0.15f, 0.80f, 0.75f, 0.70f, 1, true, false, false, false, false);
 
               public final int id, radius, dur, radR, radS, rings;
               public final float cloudH, cloudR, flash, shake, fr, fg, fb, sr, sg, sb;
-              public final boolean tri, lava, anti, neu;
+              public final boolean tri, lava, anti, neu, exotic;
 
-              NukeType(int id, int radius, float cloudH, float cloudR, int dur, float flash, float shake, int radR, int radS, float fr, float fg, float fb, float sr, float sg, float sb, int rings, boolean tri, boolean lava, boolean anti, boolean neu) {
+              NukeType(int id, int radius, float cloudH, float cloudR, int dur, float flash, float shake, int radR, int radS, float fr, float fg, float fb, float sr, float sg, float sb, int rings, boolean tri, boolean lava, boolean anti, boolean neu, boolean exotic) {
                 this.id = id; this.radius = radius; this.cloudH = cloudH; this.cloudR = cloudR; this.dur = dur;
                 this.flash = flash; this.shake = shake; this.radR = radR; this.radS = radS;
                 this.fr = fr; this.fg = fg; this.fb = fb; this.sr = sr; this.sg = sg; this.sb = sb;
-                this.rings = rings; this.tri = tri; this.lava = lava; this.anti = anti; this.neu = neu;
+                this.rings = rings; this.tri = tri; this.lava = lava; this.anti = anti; this.neu = neu; this.exotic = exotic;
               }
               public static NukeType byId(int i) {
                 NukeType[] v = values();
@@ -769,17 +1020,14 @@ jobs:
                     ClientCinemaState.push(getX(), getY(), getZ(), getNukeType());
                   }
                   if (a < getNukeType().dur - 40 && a % 2 == 0) {
-                    double r = getNukeType().cloudR * 0.65;
+                    double r = getNukeType().cloudR * 0.6;
                     double ang = random.nextDouble() * 6.283;
-                    level().addParticle(ParticleTypes.ASH, getX() + Math.cos(ang) * r * random.nextDouble(), getY() + random.nextDouble() * 30, getZ() + Math.sin(ang) * r * random.nextDouble(), 0, -0.08, 0);
-                    if (a < 200) {
-                      level().addParticle(ParticleTypes.FLAME, getX() + (random.nextDouble() - 0.5) * 14, getY() + random.nextDouble() * 22, getZ() + (random.nextDouble() - 0.5) * 14, 0, 0.45, 0);
-                    }
+                    level().addParticle(ParticleTypes.ASH, getX() + Math.cos(ang) * r * random.nextDouble(), getY() + random.nextDouble() * 28, getZ() + Math.sin(ang) * r * random.nextDouble(), 0, -0.08, 0);
                   }
                 }
               }
-              @Override public boolean shouldRenderAtSqrDistance(double d) { return d < 1440000.0; }
-              @Override public AABB getBoundingBoxForCulling() { return new AABB(getX() - 320, getY() - 64, getZ() - 320, getX() + 320, getY() + 360, getZ() + 320); }
+              @Override public boolean shouldRenderAtSqrDistance(double d) { return d < 2000000.0; }
+              @Override public AABB getBoundingBoxForCulling() { return new AABB(getX() - 380, getY() - 64, getZ() - 380, getX() + 380, getY() + 400, getZ() + 380); }
               @Override public boolean isAttackable() { return false; }
               @Override protected void readAdditionalSaveData(CompoundTag n) { entityData.set(D_TYPE, n.getInt("t")); entityData.set(D_AGE, n.getInt("a")); }
               @Override protected void addAdditionalSaveData(CompoundTag n) { n.putInt("t", entityData.get(D_TYPE)); n.putInt("a", entityData.get(D_AGE)); }
@@ -1119,52 +1367,11 @@ jobs:
           }
           """)
 
-          # --- VolumetricRenderTypes.java ---
-          w(J + 'VolumetricRenderTypes.java', """
+          # --- EntityRenderers.java ---
+          w(J + 'EntityRenderers.java', """
           package com.realnukes;
-          import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-          import com.mojang.blaze3d.vertex.VertexFormat;
-          import net.minecraft.client.renderer.RenderStateShard;
-          import net.minecraft.client.renderer.RenderType;
-          import net.minecraft.resources.ResourceLocation;
-          public class VolumetricRenderTypes extends RenderType {
-            private VolumetricRenderTypes(String n, VertexFormat f, VertexFormat.Mode m, int b, boolean c, boolean s, Runnable st, Runnable cl) {
-              super(n, f, m, b, c, s, st, cl);
-            }
-            public static RenderType cloud(ResourceLocation tex) {
-              return RenderType.create("rn_vol_cloud", DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS, 512, false, true,
-                RenderType.CompositeState.builder()
-                  .setShaderState(RENDERTYPE_ENTITY_TRANSLUCENT_SHADER)
-                  .setTextureState(new RenderStateShard.TextureStateShard(tex, true, false))
-                  .setTransparencyState(TRANSLUCENT_TRANSPARENCY)
-                  .setCullState(NO_CULL)
-                  .setLightmapState(LIGHTMAP)
-                  .setOverlayState(OVERLAY)
-                  .setWriteMaskState(COLOR_WRITE)
-                  .setDepthTestState(LEQUAL_DEPTH_TEST)
-                  .createCompositeState(false));
-            }
-            public static RenderType glow(ResourceLocation tex) {
-              return RenderType.create("rn_vol_glow", DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS, 256, false, true,
-                RenderType.CompositeState.builder()
-                  .setShaderState(RENDERTYPE_EYES_SHADER)
-                  .setTextureState(new RenderStateShard.TextureStateShard(tex, true, false))
-                  .setTransparencyState(ADDITIVE_TRANSPARENCY)
-                  .setCullState(NO_CULL)
-                  .setWriteMaskState(COLOR_WRITE)
-                  .setDepthTestState(LEQUAL_DEPTH_TEST)
-                  .createCompositeState(false));
-            }
-          }
-          """)
-
-          # --- NuclearCloudRenderer.java (imports explicitos sem conflito com org.joml.Math) ---
-          w(J + 'NuclearCloudRenderer.java', """
-          package com.realnukes;
-          import java.util.Arrays;
           import com.mojang.blaze3d.vertex.PoseStack;
           import com.mojang.blaze3d.vertex.VertexConsumer;
-          import net.minecraft.client.Camera;
           import net.minecraft.client.Minecraft;
           import net.minecraft.client.renderer.LightTexture;
           import net.minecraft.client.renderer.MultiBufferSource;
@@ -1174,252 +1381,35 @@ jobs:
           import net.minecraft.client.renderer.entity.EntityRendererProvider;
           import net.minecraft.client.renderer.texture.OverlayTexture;
           import net.minecraft.resources.ResourceLocation;
-          import net.minecraft.world.phys.Vec3;
           import org.joml.Matrix3f;
           import org.joml.Matrix4f;
-          import org.joml.Vector3f;
 
-          public class NuclearCloudRenderer extends EntityRenderer<NukeEntities.NuclearCloudEntity> {
-            private static final ResourceLocation CLOUD_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/volumetric_cloud.png");
-            private static final ResourceLocation FIRE_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/fireball_core.png");
-            private static final ResourceLocation RING_TEX = new ResourceLocation(RealNukesMod.MODID, "textures/entity/shockwave_ring.png");
-            private static final RenderType RT_CLOUD = VolumetricRenderTypes.cloud(CLOUD_TEX);
-            private static final RenderType RT_FIRE = VolumetricRenderTypes.glow(FIRE_TEX);
-            private static final RenderType RT_RING = VolumetricRenderTypes.cloud(RING_TEX);
+          public class EntityRenderers {
+            private static final ResourceLocation MT = new ResourceLocation(RealNukesMod.MODID, "textures/entity/missile.png");
 
-            private static final class Puff {
-              float x, y, z, sz, rot, r, g, b, a, dsq;
-              int tile;
-            }
-
-            private final Puff[] pool = new Puff[520];
-            private final Puff[] active = new Puff[520];
-
-            public NuclearCloudRenderer(EntityRendererProvider.Context c) {
-              super(c);
-              for (int i = 0; i < pool.length; i++) pool[i] = new Puff();
-            }
-
-            @Override public ResourceLocation getTextureLocation(NukeEntities.NuclearCloudEntity e) { return CLOUD_TEX; }
-            @Override public boolean shouldRender(NukeEntities.NuclearCloudEntity e, Frustum f, double x, double y, double z) { return true; }
-
-            private static float c01(float v) { return v < 0f ? 0f : (v > 1f ? 1f : v); }
-            private static float hash(int i) {
-              float s = (float)(Math.sin(i * 12.9898 + 78.233) * 43758.5453);
-              return s - (float)Math.floor(s);
-            }
-
-            private int addPuff(int n, float x, float y, float z, float sz, float rot, float r, float g, float b, float a, int tile, float cx, float cy, float cz) {
-              if (n >= pool.length - 1 || a < 0.01f) return n;
-              Puff p = pool[n];
-              p.x = x; p.y = y; p.z = z; p.sz = sz; p.rot = rot;
-              p.r = c01(r); p.g = c01(g); p.b = c01(b); p.a = c01(a);
-              p.tile = tile & 3;
-              float dx = x - cx, dy = y - cy, dz = z - cz;
-              p.dsq = dx * dx + dy * dy + dz * dz;
-              active[n] = p;
-              return n + 1;
-            }
-
-            private void shadeAndAdd(int[] cnt, float px, float py, float pz, float nx, float ny, float nz, float sz, float rot, float ao, float fireAmt, float alpha, int tile, RealNukesMod.NukeType ty, float coreH, float embH, float cx, float cy, float cz) {
-              float sun = c01(0.50f + 0.50f * (nx * 0.55f + ny * 0.72f + nz * 0.42f));
-              float lit = (0.36f + 0.76f * sun) * ao;
-              float sr = ty.sr * lit * (1.0f + 0.08f * sun);
-              float sg = ty.sg * lit * (0.99f + 0.04f * sun);
-              float sb = ty.sb * lit * (1.06f - 0.08f * sun);
-              float fh = c01(fireAmt * (embH * 1.35f + coreH * 1.6f));
-              float wh = c01(fireAmt * coreH * 1.4f);
-              float rr = sr * (1f - fh * 0.55f) + ty.fr * fh * 1.15f + wh * 0.8f;
-              float gg = sg * (1f - fh * 0.65f) + ty.fg * fh * 1.05f + wh * 0.75f;
-              float bb = sb * (1f - fh * 0.80f) + ty.fb * fh * 0.85f + wh * 0.65f;
-              cnt[0] = addPuff(cnt[0], px, py, pz, sz, rot, rr, gg, bb, alpha, tile, cx, cy, cz);
-            }
-
-            @Override
-            public void render(NukeEntities.NuclearCloudEntity e, float yaw, float pt, PoseStack ps, MultiBufferSource buf, int pl) {
-              RealNukesMod.NukeType ty = e.getNukeType();
-              float t = e.getCloudAge() + pt;
-              float dur = ty.dur;
-              float p = c01(t / dur);
-              float fade = p > 0.78f ? c01((1f - p) / 0.22f) : 1f;
-              float rise = 1f - (float)Math.pow(1f - Math.min(1f, t / (dur * 0.33f)), 3.1);
-              float H = ty.cloudH * (0.07f + 0.93f * rise);
-              float R = ty.cloudR * (0.24f + 0.76f * (float)Math.pow(Math.min(1f, t / (dur * 0.38f)), 0.56)) + (p > 0.34f ? (p - 0.34f) * ty.cloudR * 0.70f : 0f);
-              float coreH = (float)Math.exp(-t * 0.017);
-              float embH = (float)Math.exp(-t * 0.0052);
-
-              Camera cam = this.entityRenderDispatcher.camera;
-              Vec3 cp = cam.getPosition();
-              float cx = (float)(cp.x - e.getX()), cy = (float)(cp.y - e.getY()), cz = (float)(cp.z - e.getZ());
-              Vector3f lk = cam.getLookVector(), up = cam.getUpVector();
-              float rx = lk.y * up.z - lk.z * up.y;
-              float ry = lk.z * up.x - lk.x * up.z;
-              float rz = lk.x * up.y - lk.y * up.x;
-
-              PoseStack.Pose lp = ps.last();
-              Matrix4f mat = lp.pose();
-              Matrix3f nrm = lp.normal();
-
-              if (t < 75f) {
-                drawFresnelDome(mat, nrm, buf.getBuffer(RT_RING), t * 4.5f, c01((1f - t / 75f) * 0.75f), cx, cy, cz);
-              }
-
-              int[] cnt = {0};
-
-              // Base surge (64 camadas)
-              float baseR = R * (0.52f + p * 0.95f);
-              for (int i = 0; i < 64; i++) {
-                float a = (float)(i * 6.28318 / 64.0 + t * 0.004 * (i % 2 == 0 ? 1 : -1));
-                float rr = baseR * (0.76f + 0.36f * hash(i * 3));
-                float yy = 3.5f + hash(i * 5) * R * 0.24f;
-                float px = (float)Math.cos(a) * rr, pz = (float)Math.sin(a) * rr;
-                float sz = R * (0.24f + 0.14f * hash(i * 7)) * (0.55f + 0.5f * Math.min(1f, t / 30f));
-                shadeAndAdd(cnt, px, yy, pz, (float)Math.cos(a), 0.35f, (float)Math.sin(a), sz, hash(i) * 6.28f + t * 0.015f * (i % 2 == 0 ? 1 : -1), 0.68f, 0.35f * coreH, 0.62f * fade, i, ty, coreH, embH, cx, cy, cz);
-              }
-
-              // Coluna ascendente giratoria (84 camadas)
-              float stemR = R * 0.23f;
-              for (int i = 0; i < 84; i++) {
-                float ph = (i / 84f + t * 0.0058f) % 1f;
-                float yy = ph * H * 0.92f;
-                float waist = 1f - 0.34f * (float)Math.sin(ph * 3.14159);
-                float flare = ph > 0.75f ? 1f + (ph - 0.75f) * 2.4f : (ph < 0.18f ? 1f + (0.18f - ph) * 3.2f : 1f);
-                float rad = stemR * waist * flare * (0.35f + 0.75f * hash(i * 11));
-                float ang = hash(i * 13) * 6.28318f + ph * 3.5f + t * 0.012f;
-                float px = (float)Math.cos(ang) * rad, pz = (float)Math.sin(ang) * rad;
-                float sz = stemR * (0.92f + 0.48f * hash(i * 17)) * flare;
-                float inner = 1f - c01(rad / (stemR * 1.2f));
-                float ao = 0.58f + 0.30f * ph;
-                float fAmt = (0.25f + 0.75f * inner) * (0.35f + 0.65f * ph);
-                shadeAndAdd(cnt, px, yy, pz, (float)Math.cos(ang), 0.15f, (float)Math.sin(ang), sz, hash(i * 19) * 6.28f - t * 0.02f, ao, fAmt, 0.72f * fade, i, ty, coreH, embH, cx, cy, cz);
-              }
-
-              // Toroide rolante do topo (155 camadas)
-              float capH = R * 0.56f * (1f - p * 0.25f);
-              for (int i = 0; i < 155; i++) {
-                float az = (float)(i * 2.3999632);
-                float roll = (hash(i * 23) * 6.28318f + t * 0.046f) % 6.28318f;
-                float maj = R * (0.52f + 0.20f * hash(i * 29));
-                float minR = R * (0.28f + 0.14f * hash(i * 31));
-                float cr = (float)Math.cos(roll), sr = (float)Math.sin(roll);
-                float rad = maj + minR * cr;
-                float px = (float)Math.cos(az) * rad, pz = (float)Math.sin(az) * rad;
-                float py = H + sr * capH * 0.62f;
-                float nx = (float)Math.cos(az) * cr, ny = sr, nz = (float)Math.sin(az) * cr;
-                float sz = R * (0.26f + 0.16f * hash(i * 37));
-                float ao = 0.55f + 0.52f * c01(ny * 0.5f + 0.5f);
-                float fAmt = c01(0.85f - ny * 0.75f - cr * 0.25f);
-                shadeAndAdd(cnt, px, py, pz, nx, ny, nz, sz, hash(i * 41) * 6.28f + t * 0.018f * (i % 2 == 0 ? 1 : -1), ao, fAmt, 0.78f * fade, i, ty, coreH, embH, cx, cy, cz);
-              }
-
-              // Bigorna estratosferica iluminada pelo sol (60 camadas)
-              for (int i = 0; i < 60; i++) {
-                float az = (float)(i * 2.3999632 + 1.1);
-                float u = hash(i * 43);
-                float rad = R * 0.68f * (float)Math.sqrt(u);
-                float domeY = (float)Math.sqrt(Math.max(0f, 1f - u)) * capH * 0.95f;
-                float px = (float)Math.cos(az) * rad, pz = (float)Math.sin(az) * rad;
-                float py = H + capH * 0.18f + domeY;
-                float sz = R * (0.28f + 0.15f * hash(i * 47));
-                shadeAndAdd(cnt, px, py, pz, px / (R + 1f), 0.88f, pz / (R + 1f), sz, hash(i * 53) * 6.28f + t * 0.01f, 1.08f, 0.42f * coreH, 0.82f * fade, i, ty, coreH, embH, cx, cy, cz);
-              }
-
-              // Aneis de condensacao de Wilson
-              if (t > 10f && t < 260f) {
-                float wf = c01((t - 10f) / 16f) * c01((260f - t) / 90f) * 0.55f;
-                for (int w = 0; w < ty.rings; w++) {
-                  float wy = H * (0.36f + w * 0.20f);
-                  float wr = R * (0.62f + w * 0.24f) * (0.75f + (t / 260f) * 0.65f);
-                  for (int i = 0; i < 24; i++) {
-                    float a = (float)(i * 6.28318 / 24.0 + w);
-                    cnt[0] = addPuff(cnt[0], (float)Math.cos(a) * wr, wy, (float)Math.sin(a) * wr, R * 0.20f, a + t * 0.01f, 0.96f, 0.98f, 1.0f, wf, i, cx, cy, cz);
-                  }
-                }
-              }
-
-              // Ordenacao por profundidade da camera a cada frame
-              Arrays.sort(active, 0, cnt[0], (a, b) -> Float.compare(b.dsq, a.dsq));
-              VertexConsumer vc = buf.getBuffer(RT_CLOUD);
-              for (int i = 0; i < cnt[0]; i++) {
-                emitBillboard(mat, nrm, vc, active[i], rx, ry, rz, up.x, up.y, up.z, true);
-              }
-
-              // Fogo incandescente aditivo brilhando nas fendas (32 camadas)
-              if (t < 200f) {
-                VertexConsumer fvc = buf.getBuffer(RT_FIRE);
-                float fa = c01(1f - t / 200f);
-                float fbY = H * (0.45f + 0.55f * Math.min(1f, t / 60f));
-                for (int i = 0; i < 32; i++) {
-                  float az = (float)(i * 2.39996);
-                  float el = (hash(i * 61) - 0.5f) * 2.4f;
-                  float frad = R * 0.38f * (0.4f + 0.7f * hash(i * 67));
-                  Puff fp = pool[pool.length - 1];
-                  fp.x = (float)(Math.cos(az) * Math.cos(el)) * frad;
-                  fp.y = fbY + (float)Math.sin(el) * frad * 0.75f;
-                  fp.z = (float)(Math.sin(az) * Math.cos(el)) * frad;
-                  fp.sz = R * (0.32f + 0.20f * hash(i * 71)) * (0.7f + 0.4f * coreH);
-                  fp.rot = hash(i * 73) * 6.28f + t * 0.03f;
-                  fp.r = c01(ty.fr * 0.7f + coreH * 0.8f);
-                  fp.g = c01(ty.fg * 0.65f + coreH * 0.75f);
-                  fp.b = c01(ty.fb * 0.5f + coreH * 0.65f);
-                  fp.a = fa * 0.58f;
-                  emitBillboard(mat, nrm, fvc, fp, rx, ry, rz, up.x, up.y, up.z, false);
-                }
-              }
-            }
-
-            private static void emitBillboard(Matrix4f mat, Matrix3f nrm, VertexConsumer vc, Puff p, float rx, float ry, float rz, float ux, float uy, float uz, boolean atlas) {
-              float cs = (float)Math.cos(p.rot), sn = (float)Math.sin(p.rot);
-              float ax = (rx * cs + ux * sn) * p.sz, ay = (ry * cs + uy * sn) * p.sz, az = (rz * cs + uz * sn) * p.sz;
-              float bx = (-rx * sn + ux * cs) * p.sz, by = (-ry * sn + uy * cs) * p.sz, bz = (-rz * sn + uz * cs) * p.sz;
-              float u0 = atlas ? ((p.tile & 1) * 0.5f + 0.01f) : 0f, u1 = atlas ? (u0 + 0.48f) : 1f;
-              float v0 = atlas ? (((p.tile >> 1) & 1) * 0.5f + 0.01f) : 0f, v1 = atlas ? (v0 + 0.48f) : 1f;
-              vc.vertex(mat, p.x - ax - bx, p.y - ay - by, p.z - az - bz).color(p.r, p.g, p.b, p.a).uv(u0, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
-              vc.vertex(mat, p.x + ax - bx, p.y + ay - by, p.z + az - bz).color(p.r, p.g, p.b, p.a).uv(u1, v1).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
-              vc.vertex(mat, p.x + ax + bx, p.y + ay + by, p.z + az + bz).color(p.r, p.g, p.b, p.a).uv(u1, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
-              vc.vertex(mat, p.x - ax + bx, p.y - ay + by, p.z - az + bz).color(p.r, p.g, p.b, p.a).uv(u0, v0).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, 0, 1, 0).endVertex();
-            }
-
-            private static void drawFresnelDome(Matrix4f mat, Matrix3f nrm, VertexConsumer vc, float rad, float alpha, float cx, float cy, float cz) {
-              int su = 24, sv = 12;
-              for (int iv = 0; iv < sv; iv++) {
-                float p0 = (float)(Math.PI * 0.5 * iv / sv), p1 = (float)(Math.PI * 0.5 * (iv + 1) / sv);
-                for (int iu = 0; iu < su; iu++) {
-                  float t0 = (float)(6.28318 * iu / su), t1 = (float)(6.28318 * (iu + 1) / su);
-                  domeV(mat, nrm, vc, p0, t0, rad, alpha, cx, cy, cz);
-                  domeV(mat, nrm, vc, p0, t1, rad, alpha, cx, cy, cz);
-                  domeV(mat, nrm, vc, p1, t1, rad, alpha, cx, cy, cz);
-                  domeV(mat, nrm, vc, p1, t0, rad, alpha, cx, cy, cz);
-                }
-              }
-            }
-
-            private static void domeV(Matrix4f mat, Matrix3f nrm, VertexConsumer vc, float ph, float th, float rad, float alpha, float cx, float cy, float cz) {
-              float nx = (float)(Math.sin(ph) * Math.cos(th)), ny = (float)Math.cos(ph), nz = (float)(Math.sin(ph) * Math.sin(th));
-              float px = nx * rad, py = ny * rad, pz = nz * rad;
-              float vx = cx - px, vy = cy - py, vz = cz - pz;
-              float vl = (float)Math.sqrt(vx * vx + vy * vy + vz * vz) + 0.001f;
-              float dot = Math.abs((nx * vx + ny * vy + nz * vz) / vl);
-              float fr = (float)Math.pow(1.0 - dot, 2.1) * alpha;
-              vc.vertex(mat, px, py, pz).color(0.95f, 0.97f, 1f, c01(fr)).uv(th / 6.283f, ph / 1.57f).overlayCoords(OverlayTexture.NO_OVERLAY).uv2(LightTexture.FULL_BRIGHT).normal(nrm, nx, ny, nz).endVertex();
+            public static class NoopCloud extends EntityRenderer<NukeEntities.NuclearCloudEntity> {
+              public NoopCloud(EntityRendererProvider.Context c) { super(c); }
+              @Override public ResourceLocation getTextureLocation(NukeEntities.NuclearCloudEntity e) { return MT; }
+              @Override public boolean shouldRender(NukeEntities.NuclearCloudEntity e, Frustum f, double x, double y, double z) { return false; }
             }
 
             public static class PrimedRenderer extends EntityRenderer<NukeEntities.PrimedNukeEntity> {
               public PrimedRenderer(EntityRendererProvider.Context c) { super(c); }
-              @Override public ResourceLocation getTextureLocation(NukeEntities.PrimedNukeEntity e) { return CLOUD_TEX; }
+              @Override public ResourceLocation getTextureLocation(NukeEntities.PrimedNukeEntity e) { return MT; }
               @Override
               public void render(NukeEntities.PrimedNukeEntity e, float y, float pt, PoseStack ps, MultiBufferSource buf, int pl) {
                 ps.pushPose();
                 float s = 1f + (e.getFuse() % 6 < 3 ? 0.08f : 0f);
                 ps.scale(s, s, s);
                 ps.translate(-0.5, 0, -0.5);
-                Minecraft.getInstance().getBlockRenderer().renderSingleBlock(RealNukesMod.blockFor(e.getNukeType()).defaultBlockState(), ps, buf, LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY);
+                Minecraft.getInstance().getBlockRenderer().renderSingleBlock(
+                  RealNukesMod.blockFor(e.getNukeType()).defaultBlockState(), ps, buf, LightTexture.FULL_BRIGHT, OverlayTexture.NO_OVERLAY
+                );
                 ps.popPose();
               }
             }
 
             public static class MissileRenderer extends EntityRenderer<NukeEntities.FallingMissileEntity> {
-              private static final ResourceLocation MT = new ResourceLocation(RealNukesMod.MODID, "textures/entity/missile.png");
               public MissileRenderer(EntityRendererProvider.Context c) { super(c); }
               @Override public ResourceLocation getTextureLocation(NukeEntities.FallingMissileEntity e) { return MT; }
               @Override
@@ -1446,25 +1436,72 @@ jobs:
           }
           """)
 
+          # --- ClientModEvents.java ---
+          w(J + 'ClientModEvents.java', """
+          package com.realnukes;
+          import java.io.IOException;
+          import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+          import net.minecraft.client.renderer.ShaderInstance;
+          import net.minecraft.client.renderer.entity.ThrownItemRenderer;
+          import net.minecraft.resources.ResourceLocation;
+          import net.minecraftforge.api.distmarker.Dist;
+          import net.minecraftforge.client.event.EntityRenderersEvent;
+          import net.minecraftforge.client.event.RegisterShadersEvent;
+          import net.minecraftforge.eventbus.api.SubscribeEvent;
+          import net.minecraftforge.fml.common.Mod;
+
+          @Mod.EventBusSubscriber(modid = RealNukesMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
+          public class ClientModEvents {
+            public static ShaderInstance VOLUMETRIC_SHADER;
+
+            @SubscribeEvent
+            public static void onShaders(RegisterShadersEvent ev) throws IOException {
+              ev.registerShader(
+                new ShaderInstance(ev.getResourceProvider(), new ResourceLocation(RealNukesMod.MODID, "volumetric_nuke"), DefaultVertexFormat.POSITION),
+                s -> VOLUMETRIC_SHADER = s
+              );
+            }
+
+            @SubscribeEvent
+            public static void reg(EntityRenderersEvent.RegisterRenderers ev) {
+              ev.registerEntityRenderer(RealNukesMod.NUCLEAR_CLOUD.get(), EntityRenderers.NoopCloud::new);
+              ev.registerEntityRenderer(RealNukesMod.PRIMED_NUKE.get(), EntityRenderers.PrimedRenderer::new);
+              ev.registerEntityRenderer(RealNukesMod.MINI_GRENADE_ENT.get(), ThrownItemRenderer::new);
+              ev.registerEntityRenderer(RealNukesMod.FALLING_MISSILE.get(), EntityRenderers.MissileRenderer::new);
+            }
+          }
+          """)
+
           # --- ClientCinema.java ---
           w(J + 'ClientCinema.java', """
           package com.realnukes;
           import java.util.ArrayList;
           import java.util.Iterator;
           import java.util.List;
+          import com.mojang.blaze3d.platform.GlStateManager;
+          import com.mojang.blaze3d.systems.RenderSystem;
+          import com.mojang.blaze3d.vertex.BufferBuilder;
+          import com.mojang.blaze3d.vertex.BufferUploader;
+          import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+          import com.mojang.blaze3d.vertex.Tesselator;
+          import com.mojang.blaze3d.vertex.VertexFormat;
           import net.minecraft.client.Minecraft;
           import net.minecraft.client.player.LocalPlayer;
+          import net.minecraft.client.renderer.ShaderInstance;
           import net.minecraft.sounds.SoundEvents;
           import net.minecraft.sounds.SoundSource;
           import net.minecraft.world.effect.MobEffects;
+          import net.minecraft.world.entity.Entity;
           import net.minecraft.world.phys.Vec3;
           import net.minecraftforge.api.distmarker.Dist;
           import net.minecraftforge.client.event.RenderGuiOverlayEvent;
+          import net.minecraftforge.client.event.RenderLevelStageEvent;
           import net.minecraftforge.client.event.ViewportEvent;
           import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
           import net.minecraftforge.event.TickEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
           import net.minecraftforge.fml.common.Mod;
+          import org.joml.Matrix4f;
 
           @Mod.EventBusSubscriber(modid = RealNukesMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
           public class ClientCinema {
@@ -1480,6 +1517,100 @@ jobs:
             private static int tick = 0;
 
             @SubscribeEvent
+            public static void onRenderStage(RenderLevelStageEvent ev) {
+              if (ev.getStage() != RenderLevelStageEvent.Stage.AFTER_ENTITIES) return;
+              ShaderInstance sh = ClientModEvents.VOLUMETRIC_SHADER;
+              Minecraft mc = Minecraft.getInstance();
+              if (sh == null || mc.level == null) return;
+
+              Vec3 cam = ev.getCamera().getPosition();
+              float pt = ev.getPartialTick();
+              List<NukeEntities.NuclearCloudEntity> list = new ArrayList<>();
+              for (Entity en : mc.level.entitiesForRendering()) {
+                if (en instanceof NukeEntities.NuclearCloudEntity nc) list.add(nc);
+              }
+              if (list.isEmpty()) return;
+
+              list.sort((a, b) -> Double.compare(b.distanceToSqr(cam), a.distanceToSqr(cam)));
+              float sunAngle = mc.level.getTimeOfDay(pt) * 6.28318f;
+              float sunBr = Math.max(0.24f, Math.min(1.15f, 0.35f + 0.80f * (float)Math.cos(sunAngle)));
+
+              RenderSystem.enableBlend();
+              RenderSystem.blendFuncSeparate(
+                GlStateManager.SourceFactor.SRC_ALPHA, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA,
+                GlStateManager.SourceFactor.ONE, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA
+              );
+              RenderSystem.depthMask(false);
+              RenderSystem.setShader(() -> sh);
+
+              Matrix4f viewBase = new Matrix4f(RenderSystem.getModelViewMatrix()).mul(ev.getPoseStack().last().pose());
+
+              for (NukeEntities.NuclearCloudEntity nc : list) {
+                RealNukesMod.NukeType ty = nc.getNukeType();
+                float t = nc.getCloudAge() + pt;
+                float prog = Math.min(1f, t / ty.dur);
+                float rise = 1f - (float)Math.pow(1f - Math.min(1f, t / (ty.dur * 0.32f)), 3.2);
+                float H = ty.cloudH * (0.06f + 0.94f * rise);
+                float R = ty.cloudR * (0.22f + 0.78f * (float)Math.pow(Math.min(1f, t / (ty.dur * 0.38f)), 0.55)) + (prog > 0.32f ? (prog - 0.32f) * ty.cloudR * 0.72f : 0f);
+                float bR = Math.max(R * 2.25f, t < 75f ? t * 5.0f + 10f : 0f);
+                float bH = Math.max(H + R * 1.15f, t < 75f ? t * 5.0f + 10f : 0f);
+                float cx = (float)(cam.x - nc.getX()), cy = (float)(cam.y - nc.getY()), cz = (float)(cam.z - nc.getZ());
+
+                Matrix4f localMV = new Matrix4f(viewBase).translate(-cx, -cy, -cz);
+                sh.safeGetUniform("LocalMV").set(localMV);
+                sh.safeGetUniform("CamPos").set(cx, cy, cz);
+                sh.safeGetUniform("BoxMin").set(-bR, -3f, -bR);
+                sh.safeGetUniform("BoxMax").set(bR, bH, bR);
+                sh.safeGetUniform("CloudParams").set(t, ty.cloudH, ty.cloudR, (float)ty.dur);
+                sh.safeGetUniform("FireCol").set(ty.fr, ty.fg, ty.fb);
+                sh.safeGetUniform("SmokeCol").set(ty.sr, ty.sg, ty.sb);
+                sh.safeGetUniform("ExtraParams").set((float)ty.rings, ty.exotic ? 1f : 0f, sunBr, (float)(nc.getId() % 97) * 1.73f);
+
+                boolean inside = (cx >= -bR && cx <= bR && cy >= -3f && cy <= bH && cz >= -bR && cz <= bR);
+                if (inside) {
+                  RenderSystem.disableDepthTest();
+                } else {
+                  RenderSystem.enableDepthTest();
+                }
+                RenderSystem.enableCull();
+
+                BufferBuilder bb = Tesselator.getInstance().getBuilder();
+                bb.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION);
+                emitBox(bb, -bR, -3f, -bR, bR, bH, bR, inside);
+                BufferUploader.drawWithShader(bb.end());
+              }
+
+              RenderSystem.depthMask(true);
+              RenderSystem.enableDepthTest();
+              RenderSystem.enableCull();
+              RenderSystem.defaultBlendFunc();
+              RenderSystem.disableBlend();
+            }
+
+            private static void quad(BufferBuilder bb, float x0, float y0, float z0, float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3, boolean rev) {
+              if (!rev) {
+                bb.vertex(x0, y0, z0).endVertex();
+                bb.vertex(x1, y1, z1).endVertex();
+                bb.vertex(x2, y2, z2).endVertex();
+                bb.vertex(x3, y3, z3).endVertex();
+              } else {
+                bb.vertex(x0, y0, z0).endVertex();
+                bb.vertex(x3, y3, z3).endVertex();
+                bb.vertex(x2, y2, z2).endVertex();
+                bb.vertex(x1, y1, z1).endVertex();
+              }
+            }
+
+            private static void emitBox(BufferBuilder bb, float x0, float y0, float z0, float x1, float y1, float z1, boolean rev) {
+              quad(bb, x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, rev);
+              quad(bb, x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, rev);
+              quad(bb, x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, rev);
+              quad(bb, x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, rev);
+              quad(bb, x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0, rev);
+              quad(bb, x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, rev);
+            }
+
+            @SubscribeEvent
             public static void onClientTick(TickEvent.ClientTickEvent ev) {
               if (ev.phase != TickEvent.Phase.END) return;
               Minecraft mc = Minecraft.getInstance();
@@ -1490,7 +1621,7 @@ jobs:
               synchronized (ClientCinemaState.INCOMING) {
                 for (ClientCinemaState.Event e : ClientCinemaState.INCOMING) {
                   double d = p.position().distanceTo(new Vec3(e.x, e.y, e.z));
-                  float fac = (float)Math.max(0.0, 1.30 - d / 380.0);
+                  float fac = (float)Math.max(0.0, 1.35 - d / 420.0);
                   float pow = Math.min(1f, e.type.flash * fac);
                   flash = Math.min(1f, Math.max(flash, pow));
                   flash2Pow = Math.max(flash2Pow, pow * 0.92f);
@@ -1566,28 +1697,7 @@ jobs:
           }
           """)
 
-          # --- ClientModEvents.java ---
-          w(J + 'ClientModEvents.java', """
-          package com.realnukes;
-          import net.minecraft.client.renderer.entity.ThrownItemRenderer;
-          import net.minecraftforge.api.distmarker.Dist;
-          import net.minecraftforge.client.event.EntityRenderersEvent;
-          import net.minecraftforge.eventbus.api.SubscribeEvent;
-          import net.minecraftforge.fml.common.Mod;
-
-          @Mod.EventBusSubscriber(modid = RealNukesMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
-          public class ClientModEvents {
-            @SubscribeEvent
-            public static void reg(EntityRenderersEvent.RegisterRenderers ev) {
-              ev.registerEntityRenderer(RealNukesMod.NUCLEAR_CLOUD.get(), NuclearCloudRenderer::new);
-              ev.registerEntityRenderer(RealNukesMod.PRIMED_NUKE.get(), NuclearCloudRenderer.PrimedRenderer::new);
-              ev.registerEntityRenderer(RealNukesMod.MINI_GRENADE_ENT.get(), ThrownItemRenderer::new);
-              ev.registerEntityRenderer(RealNukesMod.FALLING_MISSILE.get(), NuclearCloudRenderer.MissileRenderer::new);
-            }
-          }
-          """)
-
-          print('REALNUKES CINEMATIC GERADO COM SUCESSO!')
+          print('REALNUKES VOLUMETRICO GLSL GERADO!')
           PYEOF
 
       - name: Compilar JAR
